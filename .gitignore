@@ -1,0 +1,14 @@
+# .gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.DS_Store
+.env
+.venv
+.ipynb_checkpoints/
+# Jupyter Notebook
+*.ipynb_checkpoints/
+# VSCode
+.vscode/
