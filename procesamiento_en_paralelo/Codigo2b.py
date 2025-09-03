@@ -215,7 +215,7 @@ def prueba_threading():
     print("=" * 50)
 
     # Crear matrices de prueba (más pequeñas para demo)
-    tamaño = 10000
+    tamaño = 1000
     A = crear_matriz_aleatoria(tamaño, tamaño)
     B = crear_matriz_aleatoria(tamaño, tamaño)
 
@@ -343,7 +343,7 @@ if __name__ == "__main__":
     # comparar_rendimiento()
 
     # Explicación de conceptos
-    input("\nPresiona Enter para ver la explicación de conceptos...")
+    #input("\nPresiona Enter para ver la explicación de conceptos...")
     explicacion_conceptos()
 
     print("\n" + "🎉 PRUEBAS COMPLETADAS!")
