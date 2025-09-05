@@ -5,8 +5,8 @@ import numpy as np
 import os
 import time
 
-MIN_STOCK = 10
-MAX_STOCK = 50
+MIN_STOCK = 3
+MAX_STOCK = 11
 
 
 @dataclass
@@ -91,9 +91,7 @@ def productor_worker(inventario, restock_evt: Event, stop_evt: Event):
             restock_evt.clear()
 
 
-def consumidor_logica(
-    sucursal, inventario, restock_evt: Event | None = None
-):
+def consumidor_logica(sucursal, inventario, restock_evt: Event | None = None):
     # Hasta 2 intentos: intentamos comprar y, si no hay, pedimos reabasto y esperamos un momento.
     for intento in range(2):
         cantidad_a_comprar = np.random.randint(1, 6)
@@ -142,6 +140,8 @@ def sucursal(
     for hora in range(horas_laborales):
         print(f"--- Sucursal de {nombre} | Hora laboral {hora + 1} ---")
         trabajo_consumidor(nombre, inventario_cedis, evento_reabasto)
+        trabajo_consumidor(nombre, inventario_cedis, evento_reabasto)
+        trabajo_consumidor(nombre, inventario_cedis, evento_reabasto)
 
 
 if __name__ == "__main__":
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     )
 
     # Semilla de productos iniciales
-    for i in range(5):
+    for i in range(3):
         inventario_cedis.añadir_producto(maquila(i))
 
     # Iniciar productor global (único)
@@ -175,20 +175,23 @@ if __name__ == "__main__":
     )
     proceso_productor.start()
 
-    # Lanzar sucursales en paralelo (sólo consumidores)
-    sucursales = []
-    for nombre_sucursal in ("CDMX 🌮", "LEON 🦜", "GUADALAJARA 🐦"):
-        p = Process(
-            target=sucursal,
-            args=(nombre_sucursal, inventario_cedis),
-            kwargs=dict(horas_laborales=8, evento_reabasto=evento_reabasto),
-        )
-        p.start()
-        sucursales.append(p)
+    for dia in range(10):
+        # Lanzar sucursales en paralelo (sólo consumidores)
+        sucursales = []
+        for nombre_sucursal in ("CDMX 🌮", "LEON 🦜", "GUADALAJARA 🐦"):
+            p = Process(
+                target=sucursal,
+                args=(nombre_sucursal, inventario_cedis),
+                kwargs=dict(horas_laborales=8, evento_reabasto=evento_reabasto),
+            )
+            p.start()
+            sucursales.append(p)
 
-    # Esperar fin de jornada de todas las sucursales
-    for p in sucursales:
-        p.join()
+        # Esperar fin de jornada de todas las sucursales
+        for p in sucursales:
+            p.join()
+        print(f"--- Fin del día {dia + 1} ---\n\n")
+        input("Presiona ENTER para iniciar un nuevo día...\n")
 
     # Apagar productor global
     evento_fin.set()
