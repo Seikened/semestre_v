@@ -63,19 +63,14 @@ class TSPGeneticAlgorithm:
     def fitness(self, individual):
         """Calcular fitness (inverso de la distancia)"""
         distance = self.calcular_distancia(individual)
-        return (1 / distance if distance > 0 else float("inf"), distance)
+        return 1 / distance if distance > 0 else float("inf")
 
     def rank_population(self, population):
         """Rankear población por fitness"""
         fitness_results = [
-            (i, (self.fitness(individuo))) for i, individuo in enumerate(population)
+            (i, self.fitness(individuo)) for i, individuo in enumerate(population)
         ]
-
-        mejor_individuo = max(fitness_results, key=lambda x: x[1][0])
-
-        return sorted(
-            fitness_results, key=lambda x: x[1], reverse=True
-        ), mejor_individuo[1][1]
+        return sorted(fitness_results, key=lambda x: x[1], reverse=True)
 
     def selecion(self, population, ranked_population):
         """Selección por torneo"""
@@ -126,11 +121,15 @@ class TSPGeneticAlgorithm:
 
     def evolucionar_poblacion(self, population):
         """Evolucionar la población"""
-        ranked_population, mejor_fitness = self.rank_population(population)
+        ranked_population = self.rank_population(population)
 
-        if mejor_fitness < self.best_distance:
-            self.best_distance = mejor_fitness
-            self.best_solution = population[ranked_population[0][0]].copy()
+        # Guardar el mejor de esta generación
+        best_idx = ranked_population[0][0]
+        best_distance = self.calcular_distancia(population[best_idx])
+
+        if best_distance < self.best_distance:
+            self.best_distance = best_distance
+            self.best_solution = population[best_idx].copy()
 
         self.fitness_history.append(self.best_distance)
 
@@ -153,42 +152,6 @@ class TSPGeneticAlgorithm:
 
         return children
 
-    def paro_mejora(self, generacion):
-        """Criterio de paro basado en mejora y solo checamos cada 50 generaciones"""
-
-        distancia_actual = self.best_distance
-
-        # Si no hay historial suficiente, base = distancia actual
-        if len(self.fitness_history) < 51:
-            base = distancia_actual
-        else:
-            base = self.fitness_history[-51]
-
-        # Porcentaje de cambio (positivo si mejoró porque la distancia bajó)
-        cambio = (base - distancia_actual) / max(base, 1e-12)
-
-        if generacion % 50 == 0:
-            if distancia_actual < base:
-                emoji = "🔼"  # mejoró
-            elif distancia_actual > base:
-                emoji = "🔽"  # empeoró
-            else:
-                emoji = "➖"  # sin cambio
-
-            print(
-                f"\r\033[2KGen {generacion} | Distancia: {distancia_actual:.2f} | Cambio: {cambio:+.2%} {emoji}",
-                end="",
-                flush=True,
-            )
-
-            # === Aquí dejo tu misma lógica de paro, sin tocarla ===
-            if generacion >= self.generations // 2:
-                if self.fitness_history[-1] == self.fitness_history[-50]:
-                    print("\nNo hay mejora en 50 generaciones, terminando...")
-                    return True
-
-        return False
-
     def run(self):
         """Ejecutar el algoritmo genético"""
 
@@ -205,22 +168,24 @@ class TSPGeneticAlgorithm:
         for generation in range(self.generations):
             inicio = time.perf_counter()
             population = self.evolucionar_poblacion(population)
+
+            if generation % 50 == 0:
+                print(
+                    f"Generación {generation}: Mejor distancia = {self.best_distance:.2f}"
+                )
+                # Verificar si cambio o se estancó
+                if generation >= self.generations // 3:
+                    if self.fitness_history[-1] == self.fitness_history[-50]:
+                        print("No hay mejora en 50 generaciones, terminando...")
+                        break
             fin = time.perf_counter()
             tiempo_generacion.append(fin - inicio)
 
-            if self.paro_mejora(generation):
-                break
-
         print(
-            f"Tiempo promedio de generación: {sum(tiempo_generacion) / len(tiempo_generacion):.4f} segundos \n"
-            f"Tiempo total: {sum(tiempo_generacion):.4f} segundos"
+            f"Tiempo promedio de generación: {sum(tiempo_generacion) / len(tiempo_generacion):.4f} segundos"
         )
 
-        # Normalizar el tiempo para gráficar a mejor escala
-        t = np.array(tiempo_generacion, dtype=float)
-        t_norm = (t - t.min()) / (t.max() - t.min() + 1e-12)
-
-        plt.plot(t_norm)
+        plt.plot(tiempo_generacion)
         plt.title("Tiempo por generación")
         plt.xlabel("Generación")
         plt.ylabel("Tiempo (segundos)")
@@ -334,58 +299,6 @@ class GetInfoSystem:
 #     time.sleep(0.1)
 
 
-def amortiguador_tamaños(num_cities: int, nivel_de_esfuerzo: int = 500):
-    """
-    Calcula parámetros adaptativos para inicializar un Algoritmo Genético en problemas tipo TSP.
-
-    Parámetros:
-      num_cities (int): número de ciudades de la instancia.
-      nivel_de_esfuerzo (int): factor de cuántas evaluaciones totales hará el GA.
-        Actúa como un "slider" de precisión vs. velocidad:
-        - Valores bajos (200-400): búsqueda rápida pero menos exhaustiva.
-        - Valores altos (600-800): búsqueda más completa pero tarda más.
-
-    Qué hace:
-      1. Calcula un "presupuesto" de evaluaciones totales proporcional al tamaño del problema.
-      2. Ajusta el tamaño de la población con crecimiento √n·log₂(n), para balancear diversidad y costo.
-      3. Deriva el número de generaciones a partir del presupuesto y el tamaño de población.
-      4. Ajusta tasa de mutación, elitismo y torneo en función de la población.
-      5. Devuelve todos los parámetros listos para instanciar el GA.
-
-    Retorna:
-      tuple(tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo)
-    """
-
-    # 1. Presupuesto de evaluaciones
-    evaluaciones_totales = nivel_de_esfuerzo * num_cities * math.log2(num_cities + 1)
-
-    # 2. Tamaño de población
-    tamaño_poblacion = int(10 * math.sqrt(num_cities) * math.log2(num_cities))
-    tamaño_poblacion = max(80, min(tamaño_poblacion, 1200))
-
-    # 3. Número de generaciones
-    generaciones = int(evaluaciones_totales / tamaño_poblacion)
-    generaciones = max(150, min(generaciones, 2500))
-
-    # 4. Parámetros dependientes
-    tasa_mutacion = min(0.25, max(0.01, 2.0 / num_cities))
-    tamaño_elite = max(2, int(0.02 * tamaño_poblacion))
-    torneo = max(3, min(int(0.02 * tamaño_poblacion), 7))
-
-    print(
-        f"{'=' * 60} \n"
-        f"Configuración adaptativa -> \n"
-        f"Población: {tamaño_poblacion} \n"
-        f"Generaciones: {generaciones} \n"
-        f"Mutación: {tasa_mutacion:.3f} \n"
-        f"Elite: {tamaño_elite} \n"
-        f"Torneo: {torneo} \n"
-        f"{'=' * 60}"
-    )
-
-    return tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo
-
-
 # ================== Función Principal ==================
 def main():
     # Cargar datos
@@ -412,18 +325,19 @@ def main():
     print(f"\nEjecutando instancia {instance_id} con {num_cities} ciudades")
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
-    tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo = (
-        amortiguador_tamaños(num_cities, nivel_de_esfuerzo=10_000)
-    )
+    # Configurar y ejecutar algoritmo genético
+    tamaño_poblacion = 1_000 if num_cities <= 50 else 2_000
+    tasa_mutacion = 0.02 if num_cities <= 50 else 0.05
+    tamaño_elite = 20 if num_cities <= 50 else 50
+    generaciones = tamaño_poblacion*2 if num_cities <= 50 else tamaño_poblacion*2
 
-    # 6. Finalmente, creamos el algoritmo genético con estos parámetros adaptativos.
     ga = TSPGeneticAlgorithm(
         distance_matrix=distance_matrix,
         population_size=tamaño_poblacion,
         mutation_rate=tasa_mutacion,
         elite_size=tamaño_elite,
         generations=generaciones,
-        tournament_size=torneo,
+        tournament_size=5,
     )
 
     best_solution, best_distance, fitness_history = ga.run()
