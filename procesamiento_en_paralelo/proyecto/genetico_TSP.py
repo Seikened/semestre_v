@@ -44,7 +44,7 @@ class TSPGeneticAlgorithm:
         self.best_distance = float("inf")
         self.fitness_history = []
         self.cache = {}
-        self._pool = ThreadPoolExecutor()
+        self._pool = ThreadPoolExecutor(max_workers=4)
 
     def crear_individuo(self):
         """Crear un individuo (ruta) aleatorio"""
@@ -322,10 +322,10 @@ def main():
 
 
 
-    tamaño_poblacion = 2_000
+    tamaño_poblacion = 654
     tasa_mutacion = 0.05
     tamaño_elite = 13
-    generaciones = 20_000
+    generaciones = 10_000
     torneo = 7
 
     # 6. Finalmente, creamos el algoritmo genético con estos parámetros adaptativos.
