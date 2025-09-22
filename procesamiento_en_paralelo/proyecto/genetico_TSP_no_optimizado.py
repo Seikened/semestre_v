@@ -358,10 +358,10 @@ def main():
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
     # Configurar y ejecutar algoritmo genético
-    tamaño_poblacion = 5_000
+    tamaño_poblacion = 20_000
     tasa_mutacion = 0.05
     tamaño_elite = 20
-    generaciones = 20_000
+    generaciones = 10_000
     torneo = 10
 
     ga = TSPGeneticAlgorithm(

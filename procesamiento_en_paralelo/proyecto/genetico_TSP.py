@@ -1,6 +1,6 @@
 import ast
-import math
 import os
+
 # ---- Limitar hilos internos de BLAS/vecLib para evitar over-subscription ----
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
@@ -8,35 +8,37 @@ os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
-import platform
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from dataclasses import dataclass
-from typing import Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 # ==== Globals para workers de procesos ====
-_DMAT = None
+DISTANCIA_MATRIZ = None
 
-def _init_worker(dmat):
+
+def iniciar_worker(dmat):
     """Se ejecuta al arrancar cada proceso: deja la matriz de distancias en memoria local del worker."""
     import numpy as _np
-    global _DMAT
-    _DMAT = _np.asarray(dmat)
 
-def _fitness_individual(individual):
+    global DISTANCIA_MATRIZ
+    DISTANCIA_MATRIZ = _np.asarray(dmat)
+
+
+def fitness_individual(individual):
     """(fit_inv, dist) usando la matriz global _DMAT (NumPy vectorizado, resultados idénticos a tu bucle)."""
     import numpy as _np
+
     idx = _np.asarray(individual, dtype=_np.int64)
     nxt = _np.roll(idx, -1)
-    dist = float(_DMAT[idx, nxt].sum())
+    dist = float(DISTANCIA_MATRIZ[idx, nxt].sum())
     return (1.0 / dist if dist > 0 else float("inf"), dist)
 
-def _fitness_individual_local(dmat, individual):
+
+def fitness_individual_local(dmat, individual):
     """Mismo cálculo vectorizado pero en el proceso principal (para benchmark secuencial limpio)."""
     idx = np.asarray(individual, dtype=np.int64)
     nxt = np.roll(idx, -1)
@@ -62,7 +64,7 @@ class TSPGeneticAlgorithm:
         generations=500,
         tournament_size=5,
         *,
-        parallel_backend="process",     # "process" | "thread" | "none"
+        parallel_backend="process",  # "process" | "thread" | "none"
         max_workers=None,
         chunk_size=256,
         do_benchmark=True,
@@ -77,25 +79,26 @@ class TSPGeneticAlgorithm:
         self.best_solution = None
         self.best_distance = float("inf")
         self.fitness_history = []
-        
+
         # --- paralelismo configurable ---
-        self.parallel_backend = parallel_backend
-        self.max_workers = (max_workers or max(1, (os.cpu_count() or 2) - 1))
-        self.chunk_size = int(chunk_size)
+        self.backend_mode = parallel_backend
+        self.max_workers = max_workers or max(1, (os.cpu_count() or 2) - 1) # Esto significa "uno menos que el total de CPUs"
+        self.chunk_size: int = chunk_size
         self.do_benchmark = do_benchmark
 
         self._pool = None  # Thread o Process executor (según backend)
 
-    def _open_pool(self):
+    def open_pool(self):
         """Crea el pool según backend (una sola vez)."""
         if self._pool is not None:
             return
-        if self.parallel_backend == "thread":
+        if self.backend_mode == "thread":
             self._pool = ThreadPoolExecutor(max_workers=self.max_workers)
-        elif self.parallel_backend == "process":
+            
+        elif self.backend_mode == "process":
             self._pool = ProcessPoolExecutor(
                 max_workers=self.max_workers,
-                initializer=_init_worker,
+                initializer=iniciar_worker,
                 initargs=(self.distance_matrix,),
             )
         else:
@@ -106,67 +109,103 @@ class TSPGeneticAlgorithm:
             self._pool.shutdown(wait=True)
             self._pool = None
 
-    def rank_population_backend(self, population, k=0):
+
+    def _time_one_generation(self, population, *, backend, include_pool_startup=False):
         """
-        Evalúa la población con el backend elegido y devuelve:
-        (idx_elite, mejor_distancia, aptitud_arr, distancia_arr)
+        Temporiza una sola generación completa con el backend indicado.
+        Retorna (new_population, dt_seg).
         """
-        n = len(population)
-
-        if self.parallel_backend == "thread":
-            # Hilos usan self.fitness (CPU-bound bajo GIL; útil para comparar)
-            results = list(self._pool.map(self.fitness, population))
-        elif self.parallel_backend == "process":
-            # Procesos: GIL no aplica; cada worker usa NumPy vectorizado
-            results = list(self._pool.map(_fitness_individual, population, chunksize=self.chunk_size))
-        else:
-            # Secuencial rápido (vectorizado por individuo; baseline para benchmark)
-            dmat = self.distance_matrix
-            results = [_fitness_individual_local(dmat, ind) for ind in population]
-
-        aptitud_arr   = np.fromiter((p[0] for p in results), dtype=float, count=n)
-        distancia_arr = np.fromiter((p[1] for p in results), dtype=float, count=n)
-
-        k = int(min(k, n))
-        if k > 0:
-            idx_k = np.argpartition(-aptitud_arr, k-1)[:k]
-            idx_elite = idx_k[np.argsort(-aptitud_arr[idx_k])]
-        else:
-            idx_elite = np.empty((0,), dtype=int)
-
-        mejor_distancia = float(distancia_arr[int(np.argmax(aptitud_arr))])
-        return idx_elite, mejor_distancia, aptitud_arr, distancia_arr
-
-    def _benchmark_eval(self, population, warmup=1):
-        """Mide t_seq (backend='none') vs t_par (backend actual) sobre la población actual."""
         import time as _t
+        # Guardar estado actual
+        old_backend = self.backend_mode
+        had_pool_before = self._pool is not None
 
-        # Warmup corto (sobre todo útil para backend process)
-        if self.parallel_backend in ("thread", "process"):
-            self._open_pool()
-            for _ in range(warmup):
-                _ = self.rank_population_backend(population, k=0)
+        # Cerrar pool actual para no contaminar la medida si cambiamos de backend
+        self._close_pool()
+        self.backend_mode = backend
 
-        # Medir secuencial vectorizado
-        old_backend = self.parallel_backend
-        self.parallel_backend = "none"
+        # Abrir pool si aplica (opcionalmente medimos también el arranque)
         t0 = _t.perf_counter()
-        _ = self.rank_population_backend(population, k=0)
+        if self.backend_mode in ("thread", "process"):
+            if include_pool_startup:
+                self.open_pool()
+            else:
+                # warmup ligero para estabilizar kernels BLAS/vecLib sin contar startup
+                self.open_pool()
+                _ = self.rank_population_backend(population, k=0)
         t1 = _t.perf_counter()
-        t_seq = t1 - t0
 
-        # Medir backend elegido
-        self.parallel_backend = old_backend
-        t2 = _t.perf_counter()
-        _ = self.rank_population_backend(population, k=0)
-        t3 = _t.perf_counter()
-        t_par = t3 - t2
+        # Ejecutar UNA generación end-to-end
+        pop_in = [ind[:] for ind in population]  # clon barato por justicia
+        g0 = _t.perf_counter()
+        pop_out = self.evolucionar_poblacion(pop_in)
+        g1 = _t.perf_counter()
 
-        speedup = (t_seq / t_par) if t_par > 0 else float("inf")
-        print(
-            f"[Benchmark] backend={old_backend} | workers={self.max_workers} | chunk={self.chunk_size} | "
-            f"t_seq={t_seq:.4f}s, t_par={t_par:.4f}s, SpeedUp={speedup:.2f}x"
-        )
+        # Cerrar pool temporal y restaurar configuración previa
+        self._close_pool()
+        self.backend_mode = old_backend
+        # No restauramos el objeto del pool antiguo (ya fue cerrado). Si existía antes, lo re-creamos.
+        if had_pool_before and self.backend_mode in ("thread", "process"):
+            self.open_pool()
+
+        # dt = sólo la parte de evolución; si quieres incluir startup, súmalo
+        dt = (g1 - g0) if not include_pool_startup else ((t1 - t0) + (g1 - g0))
+        return pop_out, dt
+
+    def real_speedup_generation(self, population, *, repeats=2, include_pool_startup=False):
+        """
+        Mide SpeedUp de UNA generación real: dt_seq / dt_par
+        - Usa el backend actual como 'par'
+        - Usa backend='none' como 'seq'
+        - Repite y promedia
+        """
+        import statistics as _st
+
+        # Medir secuencial
+        t_seq = []
+        for _ in range(max(1, repeats)):
+            _, dt = self._time_one_generation(population, backend="none", include_pool_startup=False)
+            t_seq.append(dt)
+
+        # Medir paralelo (backend actual)
+        t_par = []
+        for _ in range(max(1, repeats)):
+            _, dt = self._time_one_generation(
+                population,
+                backend=self.backend_mode,
+                include_pool_startup=include_pool_startup
+            )
+            t_par.append(dt)
+
+        m_seq = _st.mean(t_seq)
+        m_par = _st.mean(t_par)
+        speedup = (m_seq / m_par) if m_par > 0 else float("inf")
+        return m_seq, m_par, speedup
+
+    def hacer_benchmark(self, population):
+        try:
+            print(f"{'='*50}")
+            print("\n[Benchmark] Evaluando SpeedUp real de UNA generación (paralelo vs secuencial):")
+            print(f"  Backend actual: {self.backend_mode} | max_workers={self.max_workers} | chunk_size={self.chunk_size}")
+            print("  - t_seq_gen: tiempo secuencial puro (sin paralelismo)")
+            print("  - t_par_gen: tiempo paralelo (con backend seleccionado)")
+            print("  - SpeedUp: t_seq_gen / t_par_gen\n")
+
+            # 1) sin contar startup del pool (steady-state)
+            seq, par, su = self.real_speedup_generation(population, repeats=2, include_pool_startup=False)
+            print(f"  [Steady-State] t_seq_gen = {seq:.4f} s | t_par_gen = {par:.4f} s | SpeedUp = {su:.2f}x")
+
+            # 2) incluyendo el costo de arranque del pool (más conservador)
+            seq2, par2, su2 = self.real_speedup_generation(population, repeats=1, include_pool_startup=True)
+            print(f"  [Incl. Startup] t_seq_gen = {seq2:.4f} s | t_par_gen = {par2:.4f} s | SpeedUp = {su2:.2f}x\n")
+            print(f"{'='*50}")
+        except Exception as e:
+            print(f"[Benchmark] Benchmark omitido por error: {e}\n")
+            print(f"{'='*50}")
+            # Asegurar que el pool principal quede abierto tras los benchmarks
+            if self.backend_mode in ("thread", "process"):
+                self.open_pool()
+
 
     def crear_individuo(self):
         """Crear un individuo (ruta) aleatorio"""
@@ -178,12 +217,13 @@ class TSPGeneticAlgorithm:
         """Crear población inicial"""
         return [self.crear_individuo() for _ in range(self.population_size)]
 
+
     def calcular_distancia(self, route):
         dmat = self.distance_matrix
         total = 0.0
         # tramo 0..n-2
         for i in range(len(route) - 1):
-            total += dmat[route[i]][route[i+1]]
+            total += dmat[route[i]][route[i + 1]]
         # cierre del ciclo
         total += dmat[route[-1]][route[0]]
         return total
@@ -193,20 +233,34 @@ class TSPGeneticAlgorithm:
         distance = self.calcular_distancia(individual)
         return (1 / distance if distance > 0 else float("inf"), distance)
 
-    def rank_population(self, population, k=0):
+    def rank_population_backend(self, population, k=0):
+        """
+        Evalúa la población con el backend elegido y devuelve:
+        (idx_elite, mejor_distancia, aptitud_arr, distancia_arr)
+        """
         n = len(population)
 
-        resultados = list(self._pool.map(self.fitness, population))
-        #resultados = [self.fitness(ind) for ind in population]
+        match self.backend_mode:
+            case "thread":
+                # Hilos: GIL aplica; cada worker usa tu bucle puro (no vectorizado)
+                results = list(self._pool.map(self.fitness, population)) # type: ignore
+            case "process":
+                # Procesos: GIL no aplica; cada worker usa NumPy vectorizado
+                results = list(self._pool.map(fitness_individual, population, chunksize=self.chunk_size)) # type: ignore
+            case _:
+                # Secuencial rápido (vectorizado por individuo; baseline para benchmark)
+                dmat = self.distance_matrix
+                results = [fitness_individual_local(dmat, ind) for ind in population]
 
-        aptitud_arr   = np.fromiter((p[0] for p in resultados), dtype=float, count=n)
-        distancia_arr = np.fromiter((p[1] for p in resultados), dtype=float, count=n)
+        aptitud_arr = np.fromiter((p[0] for p in results), dtype=float, count=n)
+        distancia_arr = np.fromiter((p[1] for p in results), dtype=float, count=n)
 
+        
         # Top-K por máximos de aptitud (1/dist)
         k = int(min(k, n))
         if k > 0:
-            idx_k = np.argpartition(-aptitud_arr, k-1)[:k]           # bloque K, sin ordenar entre sí
-            idx_elite = idx_k[np.argsort(-aptitud_arr[idx_k])]       # ahora sí, ordenamos solo K
+            idx_k = np.argpartition(-aptitud_arr, k - 1)[:k]
+            idx_elite = idx_k[np.argsort(-aptitud_arr[idx_k])]
         else:
             idx_elite = np.empty((0,), dtype=int)
 
@@ -225,21 +279,6 @@ class TSPGeneticAlgorithm:
         return seleccion
 
 
-    def selecion(self, population, ranked_population):
-        """Selección por torneo"""
-        selection_results = []
-
-        # Elitismo: mantener los mejores individuos
-        for i in range(self.elite_size):
-            selection_results.append(population[ranked_population[i][0]])
-
-        # Selección por torneo para el resto
-        for _ in range(self.population_size - self.elite_size):
-            tournament = random.sample(ranked_population, self.tournament_size)
-            winner = max(tournament, key=lambda x: x[1])
-            selection_results.append(population[winner[0]])
-
-        return selection_results
 
     def cruza(self, parent1, parent2):
         """Crossover OX (Order Crossover)"""
@@ -275,7 +314,9 @@ class TSPGeneticAlgorithm:
     def evolucionar_poblacion(self, population):
         """Evolucionar la población"""
         # Top-K (élite) + arrays para torneo; deja use_threads en None para la heurística
-        idx_elite, mejor_dist_gen, aptitud_arr, distancia_arr = self.rank_population_backend(population, k=self.elite_size)
+        idx_elite, mejor_dist_gen, aptitud_arr, distancia_arr = (
+            self.rank_population_backend(population, k=self.elite_size)
+        )
 
         # Mejor de la generación sin recomputar
         if mejor_dist_gen < self.best_distance:
@@ -339,16 +380,21 @@ class TSPGeneticAlgorithm:
 
         print(f"Iniciando algoritmo genético para {self.num_cities} ciudades")
         print(f"Población: {self.population_size}, Generaciones: {self.generations}")
-        print(f"Backend paralelo: {self.parallel_backend} | max_workers={self.max_workers} | chunk_size={self.chunk_size}")
-        print(f"NUM_THREADS internos: OMP={os.environ.get('OMP_NUM_THREADS')} OPENBLAS={os.environ.get('OPENBLAS_NUM_THREADS')} VECLIB={os.environ.get('VECLIB_MAXIMUM_THREADS')}")
+        print(
+            f"Backend paralelo: {self.backend_mode} | max_workers={self.max_workers} | chunk_size={self.chunk_size}"
+        )
+        print(
+            f"NUM_THREADS internos: OMP={os.environ.get('OMP_NUM_THREADS')} OPENBLAS={os.environ.get('OPENBLAS_NUM_THREADS')} VECLIB={os.environ.get('VECLIB_MAXIMUM_THREADS')}"
+        )
 
         # Abrir pool si aplica
-        if self.parallel_backend in ("thread", "process"):
-            self._open_pool()
+        if self.backend_mode in ("thread", "process"):
+            self.open_pool()
 
-        # Benchmark (opcional) de evaluación de fitness
+
+       #  Benchmark opcional
         if self.do_benchmark:
-            self._benchmark_eval(population)
+            self.hacer_benchmark(population)
 
         tiempo_generacion = []
         try:
@@ -425,8 +471,6 @@ def plot_convergence(fitness_history):
     plt.show()
 
 
-
-
 # ================== Función Principal ==================
 def main():
     # Cargar datos
@@ -453,12 +497,10 @@ def main():
     print(f"\nEjecutando instancia {instance_id} con {num_cities} ciudades")
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
-
-
-    tamaño_poblacion = 5_000
+    tamaño_poblacion = 20_000
     tasa_mutacion = 0.05
     tamaño_elite = 20
-    generaciones = 20_000
+    generaciones = 10_000
     torneo = 10
 
     # 6. Finalmente, creamos el algoritmo genético con estos parámetros adaptativos.
@@ -470,7 +512,7 @@ def main():
         generations=generaciones,
         tournament_size=torneo,
         # --- NUEVO: config de paralelismo ---
-        parallel_backend="process",     # "process" recomendado para CPU-bound; prueba "thread" y "none"
+        parallel_backend="process",  # "process" recomendado para CPU-bound; prueba "thread" y "none"
         max_workers=min(6, (os.cpu_count() or 2)),  # ajusta 4–6 en el M2 Air
         chunk_size=256,
         do_benchmark=True,
@@ -484,12 +526,13 @@ def main():
     print(f"Diferencia: {abs(best_distance - selected_instance['total_distance']):.2f}")
 
     # Visualizar resultados
-    #plot_solution(city_coordinates, best_solution, best_distance, instance_id)
-    #plot_convergence(fitness_history)
+    # plot_solution(city_coordinates, best_solution, best_distance, instance_id)
+    # plot_convergence(fitness_history)
 
 
 if __name__ == "__main__":
     import multiprocessing as mp
+
     try:
         mp.set_start_method("spawn", force=False)
     except RuntimeError:
