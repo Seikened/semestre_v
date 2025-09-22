@@ -5,12 +5,15 @@ import os
 import platform
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+
 
 """
 Python 3.12.9
@@ -41,8 +44,9 @@ class TSPGeneticAlgorithm:
         self.best_distance = float("inf")
         self.fitness_history = []
         self.cache = {}
+        self._pool = ThreadPoolExecutor()
 
-    def creae_individuo(self):
+    def crear_individuo(self):
         """Crear un individuo (ruta) aleatorio"""
         individual = list(range(self.num_cities))
         random.shuffle(individual)
@@ -50,28 +54,54 @@ class TSPGeneticAlgorithm:
 
     def crear_poblacion(self):
         """Crear población inicial"""
-        return [self.creae_individuo() for _ in range(self.population_size)]
+        return [self.crear_individuo() for _ in range(self.population_size)]
 
     def calcular_distancia(self, route):
-        r = np.asarray(route, dtype=int)
-        return self.distance_matrix[r, np.roll(r, -1)].sum()
+        dmat = self.distance_matrix
+        total = 0.0
+        # tramo 0..n-2
+        for i in range(len(route) - 1):
+            total += dmat[route[i]][route[i+1]]
+        # cierre del ciclo
+        total += dmat[route[-1]][route[0]]
+        return total
 
     def fitness(self, individual):
         """Calcular fitness (inverso de la distancia)"""
-        distance: float = self.calcular_distancia(individual)
+        distance = self.calcular_distancia(individual)
         return (1 / distance if distance > 0 else float("inf"), distance)
 
-    def rank_population(self, population):
-        """Rankear población por fitness"""
-        fitness_results = [
-            (i, (self.fitness(individuo))) for i, individuo in enumerate(population)
-        ]
+    def rank_population(self, population, k=0):
+        n = len(population)
 
-        mejor_individuo = max(fitness_results, key=lambda x: x[1][0])
+        resultados = list(self._pool.map(self.fitness, population))
+        #resultados = [self.fitness(ind) for ind in population]
 
-        return sorted(
-            fitness_results, key=lambda x: x[1], reverse=True
-        ), mejor_individuo[1][1]
+        aptitud_arr   = np.fromiter((p[0] for p in resultados), dtype=float, count=n)
+        distancia_arr = np.fromiter((p[1] for p in resultados), dtype=float, count=n)
+
+        # Top-K por máximos de aptitud (1/dist)
+        k = int(min(k, n))
+        if k > 0:
+            idx_k = np.argpartition(-aptitud_arr, k-1)[:k]           # bloque K, sin ordenar entre sí
+            idx_elite = idx_k[np.argsort(-aptitud_arr[idx_k])]       # ahora sí, ordenamos solo K
+        else:
+            idx_elite = np.empty((0,), dtype=int)
+
+        mejor_distancia = float(distancia_arr[int(np.argmax(aptitud_arr))])
+        return idx_elite, mejor_distancia, aptitud_arr, distancia_arr
+
+
+    def selecion_fast(self, population, idx_elite, aptitud_arr):
+        """Elitismo + torneo leyendo aptitudes por índice (sin lista ordenada completa)."""
+        seleccion = [population[int(i)] for i in idx_elite]  # élite ya ordenada
+        n = len(population)
+        while len(seleccion) < self.population_size:
+            cand = random.sample(range(n), self.tournament_size)
+            ganador = max(cand, key=lambda i: aptitud_arr[i])
+            seleccion.append(population[ganador])
+        return seleccion
+
 
     def selecion(self, population, ranked_population):
         """Selección por torneo"""
@@ -122,67 +152,60 @@ class TSPGeneticAlgorithm:
 
     def evolucionar_poblacion(self, population):
         """Evolucionar la población"""
-        ranked_population, mejor_fitness = self.rank_population(population)
+        # Top-K (élite) + arrays para torneo; deja use_threads en None para la heurística
+        idx_elite, mejor_dist_gen, aptitud_arr, distancia_arr = self.rank_population(population, k=self.elite_size)
 
-        if mejor_fitness < self.best_distance:
-            self.best_distance = mejor_fitness
-            self.best_solution = population[ranked_population[0][0]].copy()
+        # Mejor de la generación sin recomputar
+        if mejor_dist_gen < self.best_distance:
+            self.best_distance = mejor_dist_gen
+            self.best_solution = population[int(np.argmin(distancia_arr))].copy()
 
         self.fitness_history.append(self.best_distance)
 
-        # Selección
-        selected = self.selecion(population, ranked_population)
+        # Selección rápida por índice
+        selected = self.selecion_fast(population, idx_elite, aptitud_arr)
 
-        # Crear nueva generación
+        # Nueva generación (igual que tenías)
         children = []
-
-        # Elitismo
         for i in range(self.elite_size):
             children.append(selected[i])
-
-        # Crossover y mutación
         for i in range(self.elite_size, self.population_size):
-            parent1, parent2 = random.sample(selected, 2)
-            child = self.cruza(parent1, parent2)
+            p1, p2 = random.sample(selected, 2)
+            child = self.cruza(p1, p2)
             child = self.mutar(child)
             children.append(child)
-
         return children
 
     def paro_mejora(self, generacion):
-        """Criterio de paro basado en mejora y solo checamos cada 50 generaciones"""
+        """Criterio de paro basado en mejora; solo evaluamos e imprimimos cada 50 generaciones."""
+        if generacion % 50 != 0:
+            return False  # salida rápida: no hacemos cálculos ni formateo
 
         distancia_actual = self.best_distance
 
-        # Si no hay historial suficiente, base = distancia actual
+        # Base: si aún no acumulamos 51 puntos, compara contra la distancia actual (mismo comportamiento)
         if len(self.fitness_history) < 51:
             base = distancia_actual
         else:
             base = self.fitness_history[-51]
 
-        # Porcentaje de cambio (positivo si mejoró porque la distancia bajó)
+        # Porcentaje de cambio: positivo si mejoró (distancia bajó)
         cambio = (base - distancia_actual) / max(base, 1e-12)
 
-        if generacion % 50 == 0:
-            if distancia_actual < base:
-                emoji = "🔼"  # mejoró
-            elif distancia_actual > base:
-                emoji = "🔽"  # empeoró
-            else:
-                emoji = "➖"  # sin cambio
+        if distancia_actual < base:
+            emoji = "🔼"
+        elif distancia_actual > base:
+            emoji = "🔽"
+        else:
+            emoji = "➖"
 
-            print(
-                f"\r\033[2KGen {generacion} | Distancia: {distancia_actual:.2f} | Cambio: {cambio:+.2%} {emoji}",
-                end="",
-                flush=True,
-            )
+        print(
+            f"\r\033[2KGen {generacion} | Distancia: {distancia_actual:.2f} | Cambio: {cambio:+.2%} {emoji}",
+            end="",
+            flush=True,
+        )
 
-            # === Aquí dejo tu misma lógica de paro, sin tocarla ===
-            # if generacion >= self.generations // 1:
-            #     if self.fitness_history[-1] == self.fitness_history[-50]:
-            #         print("\nNo hay mejora en 50 generaciones, terminando...")
-            #         return True
-
+        # Tu lógica de paro (comentada) permanece intacta
         return False
 
     def run(self):
@@ -269,117 +292,6 @@ def plot_convergence(fitness_history):
     plt.show()
 
 
-# ================== Definición de Nucleo, Hilo y Director ==================
-EstadoHilo = Literal["en_ejecucion", "completado", "esperando"]
-
-
-@dataclass
-class Nucleo:
-    id: int
-    tarea_actual: str
-    disponible: bool = False
-
-
-@dataclass
-class Hilo:
-    id: int
-    nucleo_asignado: Nucleo
-    tarea: str
-    estado: EstadoHilo
-
-
-@dataclass
-class Director:
-    nucleos_disponibles: int
-    nucleos_usados: int
-    nucleos: list[Nucleo]
-    hilos: list[Hilo]
-
-
-# ==================  ==================
-class GetInfoSystem:
-    def __init__(self) -> None:
-        self.sistema = platform.system().lower()
-
-    def obtener_nucleos_disponibles(self) -> int:
-        return os.cpu_count() or 1
-
-    def obtener_nucleos_usados(self) -> int | None:
-        total = self.obtener_nucleos_disponibles()
-        if hasattr(os, "getloadavg"):
-            carga_1, carga_5, carga_15 = os.getloadavg()
-            usados = int(math.ceil(carga_1))
-            return max(0, min(usados, total))
-        return None
-
-
-# tiempo = 600
-# for i in range(tiempo):
-#     system = GetInfoSystem()
-#     nucleos_disponibles = system.obtener_nucleos_disponibles()
-#     nucleos_usados = system.obtener_nucleos_usados()
-
-#     end_char = "\n" if i == tiempo - 1 else "\r"
-#     print(
-#         f"Iteración {i + 1:03d}/{tiempo}: | "
-#         f"Nucleos disponibles: {nucleos_disponibles} | "
-#         f"Nucleos usados: {nucleos_usados}",
-#         end=end_char,
-#         flush=True,
-#     )
-#     time.sleep(0.1)
-
-
-def amortiguador_tamaños(num_cities: int, nivel_de_esfuerzo: int = 500):
-    """
-    Calcula parámetros adaptativos para inicializar un Algoritmo Genético en problemas tipo TSP.
-
-    Parámetros:
-      num_cities (int): número de ciudades de la instancia.
-      nivel_de_esfuerzo (int): factor de cuántas evaluaciones totales hará el GA.
-        Actúa como un "slider" de precisión vs. velocidad:
-        - Valores bajos (200-400): búsqueda rápida pero menos exhaustiva.
-        - Valores altos (600-800): búsqueda más completa pero tarda más.
-
-    Qué hace:
-      1. Calcula un "presupuesto" de evaluaciones totales proporcional al tamaño del problema.
-      2. Ajusta el tamaño de la población con crecimiento √n·log₂(n), para balancear diversidad y costo.
-      3. Deriva el número de generaciones a partir del presupuesto y el tamaño de población.
-      4. Ajusta tasa de mutación, elitismo y torneo en función de la población.
-      5. Devuelve todos los parámetros listos para instanciar el GA.
-
-    Retorna:
-      tuple(tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo)
-    """
-
-    # 1. Presupuesto de evaluaciones
-    evaluaciones_totales = nivel_de_esfuerzo * num_cities * math.log2(num_cities + 1)
-
-    # 2. Tamaño de población
-    tamaño_poblacion = int(10 * math.sqrt(num_cities) * math.log2(num_cities))
-    tamaño_poblacion = max(80, min(tamaño_poblacion, 1200))
-
-    # 3. Número de generaciones
-    generaciones = int(evaluaciones_totales / tamaño_poblacion)
-    generaciones = max(150, min(generaciones, 10_000))
-
-    # 4. Parámetros dependientes
-    tasa_mutacion = min(0.25, max(0.01, 2.0 / num_cities))
-    tamaño_elite = max(2, int(0.02 * tamaño_poblacion))
-    torneo = max(3, min(int(0.02 * tamaño_poblacion), 7))
-
-    print(
-        f"{'=' * 60} \n"
-        f"Configuración adaptativa -> \n"
-        f"Población: {tamaño_poblacion} \n"
-        f"Generaciones: {generaciones} \n"
-        f"Mutación: {tasa_mutacion:.3f} \n"
-        f"Elite: {tamaño_elite} \n"
-        f"Torneo: {torneo} \n"
-        f"{'=' * 60}"
-    )
-
-    return tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo
 
 
 # ================== Función Principal ==================
@@ -408,16 +320,14 @@ def main():
     print(f"\nEjecutando instancia {instance_id} con {num_cities} ciudades")
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
-    # tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo = (
-    #     amortiguador_tamaños(num_cities, nivel_de_esfuerzo=15_000)
-    # )
+
 
     tamaño_poblacion = 654
     tasa_mutacion = 0.05
     tamaño_elite = 13
     generaciones = 20_000
     torneo = 7
-    
+
     # 6. Finalmente, creamos el algoritmo genético con estos parámetros adaptativos.
     ga = TSPGeneticAlgorithm(
         distance_matrix=distance_matrix,
@@ -436,8 +346,8 @@ def main():
     print(f"Diferencia: {abs(best_distance - selected_instance['total_distance']):.2f}")
 
     # Visualizar resultados
-    plot_solution(city_coordinates, best_solution, best_distance, instance_id)
-    plot_convergence(fitness_history)
+    #plot_solution(city_coordinates, best_solution, best_distance, instance_id)
+    #plot_convergence(fitness_history)
 
 
 main()

@@ -152,6 +152,39 @@ class TSPGeneticAlgorithm:
 
         return children
 
+
+    def paro_mejora(self, generacion):
+        """Criterio de paro basado en mejora; solo evaluamos e imprimimos cada 50 generaciones."""
+        if generacion % 50 != 0:
+            return False  # salida rápida: no hacemos cálculos ni formateo
+
+        distancia_actual = self.best_distance
+
+        # Base: si aún no acumulamos 51 puntos, compara contra la distancia actual (mismo comportamiento)
+        if len(self.fitness_history) < 51:
+            base = distancia_actual
+        else:
+            base = self.fitness_history[-51]
+
+        # Porcentaje de cambio: positivo si mejoró (distancia bajó)
+        cambio = (base - distancia_actual) / max(base, 1e-12)
+
+        if distancia_actual < base:
+            emoji = "🔼"
+        elif distancia_actual > base:
+            emoji = "🔽"
+        else:
+            emoji = "➖"
+
+        print(
+            f"\r\033[2KGen {generacion} | Distancia: {distancia_actual:.2f} | Cambio: {cambio:+.2%} {emoji}",
+            end="",
+            flush=True,
+        )
+
+        # Tu lógica de paro (comentada) permanece intacta
+        return False
+
     def run(self):
         """Ejecutar el algoritmo genético"""
 
@@ -168,18 +201,11 @@ class TSPGeneticAlgorithm:
         for generation in range(self.generations):
             inicio = time.perf_counter()
             population = self.evolucionar_poblacion(population)
-
-            if generation % 50 == 0:
-                print(
-                    f"Generación {generation}: Mejor distancia = {self.best_distance:.2f}"
-                )
-                # Verificar si cambio o se estancó
-                # if generation >= self.generations // 3:
-                #     if self.fitness_history[-1] == self.fitness_history[-50]:
-                #         print("No hay mejora en 50 generaciones, terminando...")
-                #         break
             fin = time.perf_counter()
             tiempo_generacion.append(fin - inicio)
+
+            if self.paro_mejora(generation):
+                break
 
         print(
             f"Tiempo promedio de generación: {sum(tiempo_generacion) / len(tiempo_generacion):.4f} segundos \n"
@@ -334,7 +360,7 @@ def main():
     tamaño_poblacion = 654
     tasa_mutacion = 0.05
     tamaño_elite = 13
-    generaciones = 5_000
+    generaciones = 20_000
     torneo = 7
 
     ga = TSPGeneticAlgorithm(
