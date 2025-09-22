@@ -153,7 +153,7 @@ class TSPGeneticAlgorithm:
         return children
 
 
-    def paro_mejora(self, generacion):
+    def paro_mejora(self, generacion, tiempo_ultima_gen):
         """Criterio de paro basado en mejora; solo evaluamos e imprimimos cada 50 generaciones."""
         if generacion % 50 != 0:
             return False  # salida rápida: no hacemos cálculos ni formateo
@@ -177,7 +177,7 @@ class TSPGeneticAlgorithm:
             emoji = "➖"
 
         print(
-            f"\r\033[2KGen {generacion} | Distancia: {distancia_actual:.2f} | Cambio: {cambio:+.2%} {emoji}",
+            f"\r\033[2KGen {generacion} | Tiempo: {tiempo_ultima_gen:.4f}s | Distancia: {distancia_actual:.2f} | Cambio: {cambio:+.2%} {emoji}",
             end="",
             flush=True,
         )
@@ -204,7 +204,8 @@ class TSPGeneticAlgorithm:
             fin = time.perf_counter()
             tiempo_generacion.append(fin - inicio)
 
-            if self.paro_mejora(generation):
+            ultima_tiempo_gen = tiempo_generacion[-1]
+            if self.paro_mejora(generation, ultima_tiempo_gen):
                 break
 
         print(
@@ -357,11 +358,11 @@ def main():
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
     # Configurar y ejecutar algoritmo genético
-    tamaño_poblacion = 654
+    tamaño_poblacion = 5_000
     tasa_mutacion = 0.05
-    tamaño_elite = 13
-    generaciones = 10_000
-    torneo = 7
+    tamaño_elite = 20
+    generaciones = 20_000
+    torneo = 10
 
     ga = TSPGeneticAlgorithm(
         distance_matrix=distance_matrix,
