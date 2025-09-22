@@ -40,6 +40,7 @@ class TSPGeneticAlgorithm:
         self.best_solution = None
         self.best_distance = float("inf")
         self.fitness_history = []
+        self.cache = {}
 
     def creae_individuo(self):
         """Crear un individuo (ruta) aleatorio"""
@@ -51,14 +52,15 @@ class TSPGeneticAlgorithm:
         """Crear población inicial"""
         return [self.creae_individuo() for _ in range(self.population_size)]
 
-    def calcular_distancia(self, individual):
-        """Calcular la distancia total de una ruta"""
-        total_distance = 0
-        for i in range(len(individual)):
-            from_city = individual[i]
-            to_city = individual[(i + 1) % len(individual)]
-            total_distance += self.distance_matrix[from_city][to_city]
-        return total_distance
+    def calcular_distancia(self, route):
+        key = tuple(route)
+        if key in self.cache:
+            return self.cache.get(key)
+
+        r = np.asarray(route, dtype=int)
+        distancia = self.distance_matrix[r, np.roll(r, -1)].sum()
+        self.cache[key] = distancia
+        return distancia
 
     def fitness(self, individual):
         """Calcular fitness (inverso de la distancia)"""
@@ -182,10 +184,10 @@ class TSPGeneticAlgorithm:
             )
 
             # === Aquí dejo tu misma lógica de paro, sin tocarla ===
-            if generacion >= self.generations // 2:
-                if self.fitness_history[-1] == self.fitness_history[-50]:
-                    print("\nNo hay mejora en 50 generaciones, terminando...")
-                    return True
+            # if generacion >= self.generations // 1:
+            #     if self.fitness_history[-1] == self.fitness_history[-50]:
+            #         print("\nNo hay mejora en 50 generaciones, terminando...")
+            #         return True
 
         return False
 
@@ -365,7 +367,7 @@ def amortiguador_tamaños(num_cities: int, nivel_de_esfuerzo: int = 500):
 
     # 3. Número de generaciones
     generaciones = int(evaluaciones_totales / tamaño_poblacion)
-    generaciones = max(150, min(generaciones, 2500))
+    generaciones = max(150, min(generaciones, 10_000))
 
     # 4. Parámetros dependientes
     tasa_mutacion = min(0.25, max(0.01, 2.0 / num_cities))
@@ -412,10 +414,16 @@ def main():
     print(f"\nEjecutando instancia {instance_id} con {num_cities} ciudades")
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
-    tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo = (
-        amortiguador_tamaños(num_cities, nivel_de_esfuerzo=10_000)
-    )
+    # tamaño_poblacion, tasa_mutacion, tamaño_elite, generaciones, torneo = (
+    #     amortiguador_tamaños(num_cities, nivel_de_esfuerzo=15_000)
+    # )
 
+    tamaño_poblacion = 654
+    tasa_mutacion = 0.05
+    tamaño_elite = 13
+    generaciones = 5_000
+    torneo = 7
+    
     # 6. Finalmente, creamos el algoritmo genético con estos parámetros adaptativos.
     ga = TSPGeneticAlgorithm(
         distance_matrix=distance_matrix,

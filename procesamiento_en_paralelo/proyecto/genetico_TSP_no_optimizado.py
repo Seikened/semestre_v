@@ -174,18 +174,23 @@ class TSPGeneticAlgorithm:
                     f"Generación {generation}: Mejor distancia = {self.best_distance:.2f}"
                 )
                 # Verificar si cambio o se estancó
-                if generation >= self.generations // 3:
-                    if self.fitness_history[-1] == self.fitness_history[-50]:
-                        print("No hay mejora en 50 generaciones, terminando...")
-                        break
+                # if generation >= self.generations // 3:
+                #     if self.fitness_history[-1] == self.fitness_history[-50]:
+                #         print("No hay mejora en 50 generaciones, terminando...")
+                #         break
             fin = time.perf_counter()
             tiempo_generacion.append(fin - inicio)
 
         print(
-            f"Tiempo promedio de generación: {sum(tiempo_generacion) / len(tiempo_generacion):.4f} segundos"
+            f"Tiempo promedio de generación: {sum(tiempo_generacion) / len(tiempo_generacion):.4f} segundos \n"
+            f"Tiempo total: {sum(tiempo_generacion):.4f} segundos"
         )
+        
+        # Normalizar el tiempo para gráficar a mejor escala
+        t = np.array(tiempo_generacion, dtype=float)
+        t_norm = (t - t.min()) / (t.max() - t.min() + 1e-12)
 
-        plt.plot(tiempo_generacion)
+        plt.plot(t_norm)
         plt.title("Tiempo por generación")
         plt.xlabel("Generación")
         plt.ylabel("Tiempo (segundos)")
@@ -326,10 +331,11 @@ def main():
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
     # Configurar y ejecutar algoritmo genético
-    tamaño_poblacion = 1_000 if num_cities <= 50 else 2_000
-    tasa_mutacion = 0.02 if num_cities <= 50 else 0.05
-    tamaño_elite = 20 if num_cities <= 50 else 50
-    generaciones = tamaño_poblacion*2 if num_cities <= 50 else tamaño_poblacion*2
+    tamaño_poblacion = 654
+    tasa_mutacion = 0.05
+    tamaño_elite = 13
+    generaciones = 5_000
+    torneo = 7
 
     ga = TSPGeneticAlgorithm(
         distance_matrix=distance_matrix,
@@ -337,7 +343,7 @@ def main():
         mutation_rate=tasa_mutacion,
         elite_size=tamaño_elite,
         generations=generaciones,
-        tournament_size=5,
+        tournament_size=torneo,
     )
 
     best_solution, best_distance, fitness_history = ga.run()
