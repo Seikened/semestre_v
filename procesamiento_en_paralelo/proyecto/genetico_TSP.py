@@ -322,7 +322,7 @@ def main():
 
 
 
-    tamaño_poblacion = 654
+    tamaño_poblacion = 2_000
     tasa_mutacion = 0.05
     tamaño_elite = 13
     generaciones = 20_000
