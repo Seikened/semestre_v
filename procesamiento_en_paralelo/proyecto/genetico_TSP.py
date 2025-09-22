@@ -53,18 +53,12 @@ class TSPGeneticAlgorithm:
         return [self.creae_individuo() for _ in range(self.population_size)]
 
     def calcular_distancia(self, route):
-        key = tuple(route)
-        if key in self.cache:
-            return self.cache.get(key)
-
         r = np.asarray(route, dtype=int)
-        distancia = self.distance_matrix[r, np.roll(r, -1)].sum()
-        self.cache[key] = distancia
-        return distancia
+        return self.distance_matrix[r, np.roll(r, -1)].sum()
 
     def fitness(self, individual):
         """Calcular fitness (inverso de la distancia)"""
-        distance = self.calcular_distancia(individual)
+        distance: float = self.calcular_distancia(individual)
         return (1 / distance if distance > 0 else float("inf"), distance)
 
     def rank_population(self, population):
@@ -421,7 +415,7 @@ def main():
     tamaño_poblacion = 654
     tasa_mutacion = 0.05
     tamaño_elite = 13
-    generaciones = 5_000
+    generaciones = 20_000
     torneo = 7
     
     # 6. Finalmente, creamos el algoritmo genético con estos parámetros adaptativos.
