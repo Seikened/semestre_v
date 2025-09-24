@@ -153,7 +153,7 @@ class TSPGeneticAlgorithm:
         return children
 
 
-    def paro_mejora(self, generacion, tiempo_ultima_gen):
+    def paro_mejora(self, generacion, tiempo_generacion):
         """Criterio de paro basado en mejora; solo evaluamos e imprimimos cada 50 generaciones."""
         if generacion % 50 != 0:
             return False  # salida rápida: no hacemos cálculos ni formateo
@@ -176,14 +176,39 @@ class TSPGeneticAlgorithm:
         else:
             emoji = "➖"
 
-        print(
-            f"\r\033[2KGen {generacion} | Tiempo: {tiempo_ultima_gen:.4f}s | Distancia: {distancia_actual:.2f} | Cambio: {cambio:+.2%} {emoji}",
-            end="",
-            flush=True,
+        tiempo_transcurrido = sum(tiempo_generacion)/60
+        promedio_tiempo = sum(tiempo_generacion) / len(tiempo_generacion) if tiempo_generacion else 0.0
+        tiempo_restante = (promedio_tiempo * (self.generations - generacion))/60
+        tiempo_aproximado_total = (promedio_tiempo * self.generations)/60
+        tiempo_simulado_10k = (promedio_tiempo * 10_000)/60
+        tiempo_simulado_20k = (promedio_tiempo * 20_000)/60
+        
+
+        # Construye el texto del panel (5 líneas)
+        panel = (
+            f"{'=' * 70}\n"
+            f"Gen {generacion}/{self.generations} ({generacion/self.generations:.1%}) | "
+            f"📏 Distancia: {distancia_actual:.2f} | {emoji} {cambio:+.2%}\n"
+            f"Tiempo restante: {tiempo_restante:.2f} min | "
+            f"Tiempo promedio: {promedio_tiempo:.4f}s\n"
+            f"Simulado: {tiempo_transcurrido:.2f}/{(tiempo_aproximado_total):.2f} min | "
+            f"10k={(tiempo_simulado_10k):.2f} min | 20k={(tiempo_simulado_20k):.2f} min\n"
+            f"{'=' * 70}"
         )
 
-        # Tu lógica de paro (comentada) permanece intacta
-        return False
+        # N es 5
+        N = 5
+
+        # 1) Vuelve al ancla
+        print("\033[u", end="")  # restore cursor (ESC[u)
+
+        # 2) Limpia exactamente N líneas, bajando una a una
+        print(("\033[2K\033[1B" * N), end="")  # clear line + move down
+        # 3) Sube N para regresar al inicio del panel
+        print(f"\033[{N}A", end="")
+
+        # 4) Dibuja el panel
+        print(panel, end="", flush=True)
 
     def run(self):
         """Ejecutar el algoritmo genético"""
@@ -197,6 +222,10 @@ class TSPGeneticAlgorithm:
         print(f"Iniciando algoritmo genético para {self.num_cities} ciudades")
         print(f"Población: {self.population_size}, Generaciones: {self.generations}")
 
+        # === Ancla del panel: reserva 5 líneas y guarda la posición ===
+        N = 5  # alto del panel: sep + 3 líneas + sep
+        print("\n" * N, end="")          # crea el hueco (no lo pongas dentro del loop)
+        print(f"\033[{N}F\033[s", end="")  # sube N líneas y guarda cursor (ESC[s)
         tiempo_generacion = []
         for generation in range(self.generations):
             inicio = time.perf_counter()
@@ -204,12 +233,10 @@ class TSPGeneticAlgorithm:
             fin = time.perf_counter()
             tiempo_generacion.append(fin - inicio)
 
-            ultima_tiempo_gen = tiempo_generacion[-1]
-            if self.paro_mejora(generation, ultima_tiempo_gen):
-                break
+            self.paro_mejora(generation, tiempo_generacion)
 
         print(
-            f"Tiempo promedio de generación: {sum(tiempo_generacion) / len(tiempo_generacion):.4f} segundos \n"
+            f"\nTiempo promedio de generación: {sum(tiempo_generacion) / len(tiempo_generacion):.4f} segundos | "
             f"Tiempo total: {sum(tiempo_generacion):.4f} segundos"
         )
         
@@ -358,10 +385,10 @@ def main():
     print(f"Distancia total de referencia: {selected_instance['total_distance']}")
 
     # Configurar y ejecutar algoritmo genético
-    tamaño_poblacion = 20_000
+    tamaño_poblacion = 100_000
     tasa_mutacion = 0.05
     tamaño_elite = 20
-    generaciones = 10_000
+    generaciones = 300
     torneo = 10
 
     ga = TSPGeneticAlgorithm(
