@@ -413,10 +413,10 @@ def main():
     print(f"\nEjecutando instancia {instance_id} con {num_cities} ciudades")
     print(f"Distancia total de referencia: {selected_instance['total_distance']}\n")
 
-    tamaño_poblacion = 100_000
+    tamaño_poblacion = 30
     tasa_mutacion = 0.05
     tamaño_elite = 20
-    generaciones = 300
+    generaciones = 1_000
     torneo = 10
 
     # 6. Finalmente, creamos el algoritmo genético con estos parámetros adaptativos.
@@ -427,7 +427,7 @@ def main():
         elite_size=tamaño_elite,
         generations=generaciones,
         tournament_size=torneo,
-        max_workers=min(4, (os.cpu_count() or 2)),  # ajusta 4–6 en el M2 Air
+        max_workers=min(8, (os.cpu_count() or 2)),  # ajusta 4–6 en el M2 Air
         chunk_size=256,
     )
 
