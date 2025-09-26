@@ -12,52 +12,35 @@ import polars as pl
 import matplotlib.pyplot as plt
 
 
+
+
+def cargar_datos_yf(ticker: str, start: str, interval: str) -> pl.LazyFrame:
+    data = yf.download(ticker, start=start, interval=interval)
+    data.columns = ["_".join(col).strip() for col in data.columns.values]  # type: ignore
+    data = data.reset_index()  # type: ignore
+    lf = pl.LazyFrame(data)
+    lf = lf.with_columns(pl.col("Date").dt.date().alias("date"))
+    return lf
+
+
+def closer_ticker(lf: pl.LazyFrame, ticker: str):
+    return lf.select([f"Close_{ticker}"]).collect().to_series()
+
+
+
 #  Apple |  Desde que existe | Mensual
-data_apple = yf.download("AAPL", start="2008-01-01", interval="1mo")
+lf_apple = cargar_datos_yf("AAPL", start="2008-01-01", interval="1mo")
 #  Microsoft |  Desde que existe | Mensual
-data_microsoft = yf.download("MSFT", start="2008-01-01", interval="1mo")
+lf_microsoft = cargar_datos_yf("MSFT", start="2008-01-01", interval="1mo")
 # Google
-data_google = yf.download("GOOGL", start="2008-01-01", interval="1mo")
-
-# Pasamos las columnas a un formato más amigable para polars
-
-# Apple
-data_apple.columns = ["_".join(col).strip() for col in data_apple.columns.values]  # type: ignore
-data_apple = data_apple.reset_index()  # type: ignore
-
-# Microsoft
-data_microsoft.columns = [
-    "_".join(col).strip() for col in data_microsoft.columns.values
-]  # type: ignore
-data_microsoft = data_microsoft.reset_index()  # type: ignore
-
-# Google
-data_google.columns = ["_".join(col).strip() for col in data_google.columns.values]  # type: ignore
-data_google = data_google.reset_index()  # type: ignore
-
-# Dataframe de Apple
-lf_apple = pl.LazyFrame(data_apple)
-lf_apple = lf_apple.with_columns(pl.col("Date").dt.date().alias("date"))
-
-# Dataframe de Microsoft
-lf_microsoft = pl.LazyFrame(data_microsoft)
-lf_microsoft = lf_microsoft.with_columns(pl.col("Date").dt.date().alias("date"))
-
-# Dataframe de Google
-lf_google = pl.LazyFrame(data_google)
-lf_google = lf_google.with_columns(pl.col("Date").dt.date().alias("date"))
+lf_google = cargar_datos_yf("GOOGL", start="2008-01-01", interval="1mo")
 
 
-# print("\n [POLARS] Apple dataframe:")
-# print(lf_apple.limit(5).collect())
-# print(f"\n [POLARS] lf_apple.columns: \n{lf_apple.columns}")
+serie_precios_apple = closer_ticker(lf_apple, "AAPL")
 
+serie_precios_microsoft = closer_ticker(lf_microsoft, "MSFT")
 
-serie_precios_apple = lf_apple.select("Close_AAPL").collect().to_series()
-
-serie_precios_microsoft = lf_microsoft.select("Close_MSFT").collect().to_series()
-
-serie_precios_google = lf_google.select("Close_GOOGL").collect().to_series()
+serie_precios_google = closer_ticker(lf_google, "GOOGL")
 
 
 plt.plot(serie_precios_apple, label="Precio Cierre Apple")
