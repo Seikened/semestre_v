@@ -32,8 +32,8 @@ MODEL_NAME = "pysentimiento/robertuito-sentiment-analysis"
 
 def init_pipeline(max_len: int):
     device = "mps" if torch.backends.mps.is_available() else -1
-    return pipeline(
-        task="sentiment-analysis",
+    return pipeline( # type: ignore
+        task="sentiment-analysis", # type: ignore
         model=MODEL_NAME,
         device=device,
         truncation=True,        # aplica truncación por defecto
@@ -59,7 +59,7 @@ def clasificar_uno(pipe, texto: str, nombre: str):
     salida = pipe(texto, truncation=True, max_length=MAX_LEN)[0]
     # salida es lista de dicts con {'label','score'} gracias a top_k=None
     puntajes = {d["label"]: float(d["score"]) for d in salida}
-    etiqueta = max(puntajes, key=puntajes.get)
+    etiqueta = max(puntajes, key=puntajes.get) # type: ignore
     tt = tokens_totales(pipe.tokenizer, texto)
     tp = tokens_procesados(pipe.tokenizer, texto, MAX_LEN)
     usado = tp / max(tt, 1)
