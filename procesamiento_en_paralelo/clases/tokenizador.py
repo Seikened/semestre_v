@@ -1,167 +1,246 @@
 # fast_tokenizer_numba.py
-# A minimal high-throughput whitespace/punct tokenizer using Numba over uint8 buffers.
-# Design goals: single pass over bytes, no Python objects in the hot loop, zero temporaries.
+# Tokenizador minimalista y rápido sobre uint8 + Numba.
+# Extras:
+#  - Métricas por fase: escaneo puro vs construcción de strings
+#  - Ruta "IDs sin strings" (hash por token en el kernel) para evitar objetos Python
+#  - Baselines: split() y regex
+#  - API separada: tokens (strings) / ids (hash-based) / fases
 
 import os, time, re
 import numpy as np
-from numba import njit
+from numba import njit, uint64
 
-# Optional: align Numba threads (not strictly needed; this scanner is sequential by design).
+# ============================ CONFIG GLOBAL ===================================
+# Hilos de Numba (el escáner es secuencial; esto es opcional)
 os.environ.setdefault("NUMBA_NUM_THREADS", "1")
 
-# ---------------------------
-# 1) Build a byte-class table
-# ---------------------------
-# We'll mark "separator" bytes (ASCII whitespace + basic punctuation).
-def build_sep_table():
+# Cambia reglas aquí si quieres otro set de separadores.
+SPLIT_ON_WHITESPACE = True   # si True, añade whitespace ASCII como separador
+SPLIT_ON_PUNCT      = True   # si True, separa en puntuación ASCII básica
+
+# ============================ TABLA DE CLASES =================================
+def build_sep_table(split_ws=True, split_punct=True) -> np.ndarray:
     sep = np.zeros(256, dtype=np.uint8)
-    # ASCII whitespace
-    for b in (9, 10, 11, 12, 13, 32):  # \t \n \v \f \r ' '
-        sep[b] = 1
-    # Basic punctuation to split on (tune as you like)
-    punct = b"""!"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"""
-    for b in punct:
-        sep[int(b)] = 1
+    if split_ws:
+        for b in (9, 10, 11, 12, 13, 32):  # \t \n \v \f \r ' '
+            sep[b] = 1
+    if split_punct:
+        punct = b"""!"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"""
+        for b in punct:
+            sep[int(b)] = 1
     return sep
 
-SEP = build_sep_table()
+SEP = build_sep_table(SPLIT_ON_WHITESPACE, SPLIT_ON_PUNCT)
 
-# ----------------------------------------
-# 2) Numba kernel: one-pass token scanning
-# ----------------------------------------
-# Input: u8 bytes and sep table
-# Output: starts[], ends[], and count of tokens (write-once, no temps)
-@njit(cache=True, fastmath=False)  # sequential on purpose; predictable branchy code
+# =============================== KERNELS ======================================
+@njit(cache=True, fastmath=False)
 def scan_tokens(u8, sep, starts, ends):
+    """
+    Escaneo en un solo pase: emite offsets [start,end) por token.
+    Sin temporales ni objetos Python.
+    """
     n = u8.size
     i = 0
     tcount = 0
-    # Skip leading seps
+    # saltar separadores iniciales
     while i < n and sep[u8[i]] == 1:
         i += 1
     while i < n:
-        # Start of token
         s = i
         i += 1
-        # Advance while non-separator
         while i < n and sep[u8[i]] == 0:
             i += 1
         e = i
-        # Emit token
         starts[tcount] = s
         ends[tcount] = e
         tcount += 1
-        # Skip run of separators
         while i < n and sep[u8[i]] == 1:
             i += 1
     return tcount
 
-# ---------------------------------------------------
-# 3) Friendly Python wrapper: bytes -> tokens / ids
-# ---------------------------------------------------
-def tokenize_numba(text: str, return_ids=False, vocab=None):
-    # Encode once; operate on contiguous bytes
+@njit(cache=True, fastmath=False)
+def scan_tokens_hash(u8, sep, starts, ends, hashes):
+    """
+    Igual que scan_tokens, pero **calcula hash FNV-1a** por token dentro del bucle.
+    Evita crear strings para IDs; ideal para pipeline numérico.
+    """
+    FNV_OFFSET = uint64(1469598103934665603)   # 64-bit
+    FNV_PRIME  = uint64(1099511628211)
+
+    n = u8.size
+    i = 0
+    tcount = 0
+    while i < n and sep[u8[i]] == 1:
+        i += 1
+    while i < n:
+        s = i
+        h = FNV_OFFSET
+        # consumir primer byte del token
+        b = u8[i]
+        h ^= uint64(b)
+        h *= FNV_PRIME
+        i += 1
+        # resto del token
+        while i < n and sep[u8[i]] == 0:
+            b = u8[i]
+            h ^= uint64(b)
+            h *= FNV_PRIME
+            i += 1
+        e = i
+        starts[tcount] = s
+        ends[tcount]   = e
+        hashes[tcount] = h
+        tcount += 1
+        while i < n and sep[u8[i]] == 1:
+            i += 1
+    return tcount
+
+# =============================== WRAPPERS =====================================
+def tokenize_numba_offsets(text: str):
+    """
+    Devuelve sólo offsets (y el buffer u8) para usos downstream sin strings.
+    """
     u8 = np.frombuffer(text.encode("utf-8", errors="ignore"), dtype=np.uint8)
-    # Upper-bound on #tokens is len(bytes) (worst case: "a a a ...")
     starts = np.empty(u8.size, dtype=np.int32)
     ends   = np.empty(u8.size, dtype=np.int32)
-    count = scan_tokens(u8, SEP, starts, ends)
+    count  = scan_tokens(u8, SEP, starts, ends)
+    return u8, starts[:count], ends[:count]
 
-    # Slice only the tokens found
-    starts = starts[:count]
-    ends   = ends[:count]
+def tokenize_numba_tokens(text: str):
+    """
+    Devuelve lista de tokens como strings (conversión fuera del hot loop).
+    """
+    u8, S, E = tokenize_numba_offsets(text)
+    # construcción de strings: costo dominante si hay muchos tokens
+    tokens = [u8[s:e].tobytes().decode("utf-8", errors="ignore") for s, e in zip(S, E)]
+    return tokens
 
-    # Turn offsets into strings (done out of the hot loop)
-    tokens = [u8[s:e].tobytes().decode("utf-8", errors="ignore") for s, e in zip(starts, ends)]
+def tokenize_numba_ids(text: str, vocab=None, build_vocab=True, unk_token="<unk>"):
+    """
+    Ruta de **IDs sin strings**: el kernel emite hashes por token.
+    Luego mapeamos hash->id en Python (sin convertir a str).
+    Nota: hashes pueden colisionar; para demo/bench es suficiente.
+    """
+    u8 = np.frombuffer(text.encode("utf-8", errors="ignore"), dtype=np.uint8)
+    starts = np.empty(u8.size, dtype=np.int32)
+    ends   = np.empty(u8.size, dtype=np.int32)
+    hashes = np.empty(u8.size, dtype=np.uint64)
+    count  = scan_tokens_hash(u8, SEP, starts, ends, hashes)
 
-    if not return_ids:
-        return tokens
-
-    # Optional: map tokens to ids. Keep it simple with a Python dict (outside hot loop).
-    # If no vocab provided, build one on the fly.
-    if vocab is None:
-        vocab = {}
+    H = hashes[:count]
+    # construir/usar vocabulario basado en hash
+    if vocab is None and build_vocab:
+        vocab = {}  # hash -> id
+        ids = np.empty(count, dtype=np.int32)
         next_id = 0
-        ids = []
-        for tok in tokens:
-            if tok not in vocab:
-                vocab[tok] = next_id
+        for i in range(count):
+            h = int(H[i])
+            vid = vocab.get(h)
+            if vid is None:
+                vid = next_id
+                vocab[h] = vid
                 next_id += 1
-            ids.append(vocab[tok])
-        return tokens, np.array(ids, dtype=np.int32), vocab
+            ids[i] = vid
+        return ids, vocab
     else:
-        unk_id = vocab.get("<unk>", -1)
-        ids = np.array([vocab.get(tok, unk_id) for tok in tokens], dtype=np.int32)
-        return tokens, ids, vocab
+        if vocab is None:
+            # sin vocab: regresa los hashes (IDs provisionales)
+            return H.copy(), {}
+        unk_id = vocab.get(unk_token, -1) if isinstance(unk_token, str) else -1
+        ids = np.array([vocab.get(int(h), unk_id) for h in H], dtype=np.int32)
+        return ids, vocab
 
-# ----------------------------------------------------
-# 4) Baselines for sanity: pure Python & regex variant
-# ----------------------------------------------------
-def tokenize_python(text: str):
-    # Simple split on whitespace and punctuation (roughly similar behavior)
-    return [t for t in re.split(r"[\s\W]+", text) if t]
-
+# =============================== BASELINES ====================================
 def tokenize_python_ws(text: str):
-    # Just whitespace, closest to many .split() baselines
+    # Fast-path C para whitespace
     return [t for t in text.split() if t]
 
-# ------------------------
-# 5) Tiny benchmark helper
-# ------------------------
-def bench():
-    # Make a decently sized text by repeating a paragraph
+def tokenize_python_regex(text: str):
+    # Similar semántica a "whitespace+punct", pero con costo de regex
+    return [t for t in re.split(r"[\s\W]+", text) if t]
+
+# ============================== BENCHMARKS ====================================
+def bench_all():
     para = ("Numba is fast. Tokenizers love contiguous bytes, "
             "single-pass scans, and no Python objects in the hot loop! ") * 2000
-    text = para * 16  # ~ a few MB; adjust up for your machine
+    text = para * 16  # ~pocos MB; sube si quieres
 
-    # Warm up
-    _ = tokenize_numba(text)
+    # Warm-up kernels
+    _ = tokenize_numba_offsets(text)
+    _ = tokenize_numba_ids(text, build_vocab=False)
 
-    t0 = time.perf_counter()
-    tok0 = tokenize_python_ws(text)
-    t1 = time.perf_counter()
+    # --- Baselines Python ---
+    t0 = time.perf_counter(); tok_ws = tokenize_python_ws(text); t1 = time.perf_counter()
     t_py = t1 - t0
 
-    t0 = time.perf_counter()
-    tok1 = tokenize_python(text)
-    t1 = time.perf_counter()
+    t0 = time.perf_counter(); tok_rgx = tokenize_python_regex(text); t1 = time.perf_counter()
     t_re = t1 - t0
 
+    # --- Numba: tokens (incluye strings) ---
+    t0 = time.perf_counter(); tok_nb = tokenize_numba_tokens(text); t1 = time.perf_counter()
+    t_nb_tokens = t1 - t0
+
+    # --- Numba: fases separadas ---
+    # Escaneo puro
+    u8 = np.frombuffer(text.encode("utf-8", errors="ignore"), dtype=np.uint8)
+    starts = np.empty(u8.size, dtype=np.int32)
+    ends   = np.empty(u8.size, dtype=np.int32)
+    _ = scan_tokens(u8, SEP, starts, ends)  # warm
     t0 = time.perf_counter()
-    tok2 = tokenize_numba(text)
+    count = scan_tokens(u8, SEP, starts, ends)
     t1 = time.perf_counter()
-    t_nb = t1 - t0
+    scan_time = t1 - t0
 
-    # Sanity: token counts roughly similar (regex may differ on rules)
-    print(f"Python .split   : {t_py:.3f} s  | tokens={len(tok0)}")
-    print(f"Python regex    : {t_re:.3f} s  | tokens={len(tok1)}")
-    print(f"Numba (1 pass)  : {t_nb:.3f} s  | tokens={len(tok2)}")
+    # Construcción de strings (fuera del kernel)
+    S = starts[:count]; E = ends[:count]
+    t2 = time.perf_counter()
+    toks = [u8[s:e].tobytes().decode("utf-8", errors="ignore") for s, e in zip(S, E)]
+    t3 = time.perf_counter()
+    build_time = t3 - t2
 
+    # --- Numba: IDs sin strings (hash) ---
+    starts[:] = 0; ends[:] = 0
+    hashes = np.empty(u8.size, dtype=np.uint64)
+    _ = scan_tokens_hash(u8, SEP, starts, ends, hashes)  # warm
+    t0 = time.perf_counter()
+    count_h = scan_tokens_hash(u8, SEP, starts, ends, hashes)
+    t1 = time.perf_counter()
+    scan_hash_time = t1 - t0
+
+    # mapear hash->id sin strings (vocab dinámico)
+    H = hashes[:count_h]
+    t2 = time.perf_counter()
+    vocab = {}
+    ids = np.empty(count_h, dtype=np.int32)
+    next_id = 0
+    for i in range(count_h):
+        h = int(H[i])
+        vid = vocab.get(h)
+        if vid is None:
+            vid = next_id
+            vocab[h] = vid
+            next_id += 1
+        ids[i] = vid
+    t3 = time.perf_counter()
+    ids_map_time = t3 - t2
+
+    # --- Resultados ---
+    print(f"Python .split           : {t_py:.3f} s  | tokens={len(tok_ws)}")
+    print(f"Python regex            : {t_re:.3f} s  | tokens={len(tok_rgx)}")
+    print(f"Numba tokens (1 pase)   : {t_nb_tokens:.3f} s  | tokens={len(tok_nb)}")
+    print(f"Numba phases -> scan     {scan_time:.3f} s  | build_str {build_time:.3f} s | tokens={len(toks)}")
+    print(f"Numba IDs   -> scan+hash {scan_hash_time:.3f} s  | id_map   {ids_map_time:.3f} s | ids={ids.size}")
+    # Nota: típicamente verás scan << build_str; y scan_hash similar a scan,
+    # mientras id_map es mucho más barato que construir strings.
+
+# ================================ DEMO ========================================
 if __name__ == "__main__":
     import time
-    bench()
+    bench_all()
 
-    # Quick demo of IDs
-    texto = """
-    Vale, Fer, te armo un texto largo que parezca una historia tuya, pero escrito con un tono narrativo casi como si fuera un cuento autobiográfico. Así lo puedes usar para probar tu tokenizador con material más “realista” y extenso.
-
-⸻
-
-Había una vez un niño que creció rodeado de computadoras viejas, cables enredados y esa curiosidad que nunca se le quitó. Ese niño eras tú, aunque todavía no sabías que un día ibas a vivir entre líneas de código, algoritmos de optimización y proyectos que parecían imposibles. Desde chico te llamaba la atención desarmar las cosas, no porque quisieras destruirlas, sino porque tenías la obsesión de entender cómo funcionaban por dentro. Esa obsesión se volvió tu brújula.
-
-Con los años, tu mundo dejó de ser solo juegos en la computadora y se convirtió en un mar de retos: aprender un lenguaje de programación nuevo, descubrir cómo hacer que una librería funcionara en tu máquina, pelearte con dependencias que no querían instalarse, y sentir esa mezcla rara de enojo y euforia cuando finalmente todo corría. Fue en ese proceso donde te diste cuenta de que no se trataba solo de programar: se trataba de crear mundos, de darle forma a ideas que antes estaban solo en tu cabeza.
-
-En la universidad, cada clase era un recordatorio de lo mucho que podías construir si tenías paciencia y disciplina. Había días en los que pasabas horas leyendo sobre optimización matemática, visualización de datos o machine learning, y en otros simplemente soñabas con lo que ibas a lograr después. Entre tus proyectos estaba ese gestor de fiestas que querías lanzar, un blog hecho a mano en Reflex, o incluso un sistema de tickets con QR que sonaba tan simple en papel pero que escondía todo un universo de problemas por resolver.
-
-Mientras tanto, nunca dejaste de soñar en grande. A veces pensabas en Canadá, otras en el Reino Unido, siempre con la idea de que tu camino no tenía fronteras. Lo curioso es que, aunque tenías la vista en el futuro, tus raíces siempre estaban contigo: en León, en tus amigos, en las partidas de videojuegos que tanto disfrutabas, en los proyectos que nacían más como juegos que como negocios, y que poco a poco se convertían en empresas.
-
-Lo más fascinante de tu historia es que nunca se trató de llegar a una meta definitiva. Siempre se trató de avanzar, de aprender algo nuevo, de mejorar un poco más que ayer. Esa es la historia de alguien que vive entre bytes y sueños, que no se conforma con lo común y que, en cada línea de código, está escribiendo también un pedazo de su propia vida.
-
-⸻
-
-¿Quieres que lo haga todavía más largo, como del tamaño de un capítulo de libro (unas 3–4 páginas de texto continuo), para que exprimas tu tokenizador al máximo?
-    """
-
-    toks, ids, vocab = tokenize_numba(texto, return_ids=True)
-    print("tokens:", toks)
-    print("ids   :", ids[:10], "(vocab size:", len(vocab), ")")
+    demo = "Hola Fer! Numba+uint8, un solo pase; luego IDs sin strings. ¿Listo?"
+    print("\n--- Demo tokens ---")
+    print(tokenize_numba_tokens(demo))
+    print("--- Demo ids (hash) ---")
+    ids, vocab = tokenize_numba_ids(demo, build_vocab=True)
+    print("ids[:10]:", ids[:10], "| vocab_size:", len(vocab))
