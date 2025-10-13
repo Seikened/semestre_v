@@ -2,7 +2,7 @@ from time import perf_counter
 import numpy as np
 import math
 import os
-from numba import jit, prange, get_num_threads, set_num_threads
+from numba import njit, prange, get_num_threads, set_num_threads
 
 USE_FLOAT32 = True
 DTYPE = np.float64 if USE_FLOAT32 else np.float64
@@ -18,7 +18,7 @@ set_num_threads(nucleos)   # <-- pon 1 para ver Numba en single-thread
 print("Jit(nopython=True, parallel=True, cache=True, fastmath=True)")
 print(f"Numba threads: {get_num_threads()} | dtype: {DTYPE}")
 
-@jit(nopython=True, parallel=True, cache=True, fastmath=True)
+@njit( parallel=True, cache=True, fastmath=True)
 def calcular_senios_paralelos(angulos, out):
     n = angulos.size
     for i in prange(n):
