@@ -39,6 +39,7 @@ dependencies = [
     "lxml>=6.0.1",
     "matplotlib==3.10.5",
     "matplotlib-inline==0.1.7",
+    "mpi4py>=4.1.1",
     "multitasking==0.0.12",
     "nest-asyncio==1.6.0",
     "nltk==3.9.1",
