@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
-# Proyecto 3 – Fase 1: aprender la condición inicial u(x,0) = (1/5) sin(3πx)
-# Fer Leon + Sam | DEAP + Sympy
+# Proyecto 3 – Fase Final: residuo ut - uxx con BC/IC + HOF top-k + expresión simbólica
+# Fer Leon + Sam | DEAP + NumPy (rápido) + SymPy SOLO para mostrar la ecuación
 
+# =========================
+# Imports y setup
+# =========================
+import random
 import math
 import operator
-import random
 from functools import partial
 
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
+from deap import base, creator, tools, gp, algorithms
+
+# SymPy SOLO para pretty-print al final (no en fitness)
 import sympy
-from deap import algorithms, base, creator, gp, tools
 
 # =========================
 # Reproducibilidad y dominio
@@ -18,6 +23,12 @@ from deap import algorithms, base, creator, gp, tools
 random.seed(42)
 np.random.seed(42)
 
+# Flag para elegir ansatz:
+# True -> u(x,t) = (1/5) * sin(3πx) * h(t)  con h(t)=1 + t*r(t)  (BC exactas y amplitud correcta)
+# False -> u(x,t) = x(1-x) * g(x,t)         (BC exactas, modo libre)
+MODE_AWARE_ANSATZ = True
+
+# Gráfica de la condición inicial (1D) para referencia
 n_puntos = 400
 x_grid = np.linspace(0.0, 1.0, n_puntos)
 u_inicial = (1/5) * np.sin(3*np.pi * x_grid)
@@ -48,61 +59,58 @@ plt.axvline(1, linestyle="--", linewidth=1)
 plt.grid(True, linewidth=0.7, alpha=0.5)
 plt.legend(loc="upper right")
 plt.tight_layout()
-#plt.show()
+# plt.show()
 
 # =========================
-# Conjunto de primitivas
+# Primitivas NumPy-friendly
 # =========================
-pset = gp.PrimitiveSet('MAIN', 2)  # dos variables: x y t
-pset.renameArguments(ARG0='x', ARG1='t')
+def np_add(a, b): return a + b
+def np_sub(a, b): return a - b
+def np_mul(a, b): return a * b
+def np_neg(a):    return -a
+def np_sin(a):    return np.sin(a)
+def np_cos(a):    return np.cos(a)
 
-# primitivas básicas
-pset.addPrimitive(operator.add, 2)
-pset.addPrimitive(operator.sub, 2)
-pset.addPrimitive(operator.mul, 2)
-pset.addPrimitive(operator.neg, 1)
-pset.addPrimitive(math.sin, 1)
-pset.addPrimitive(math.cos, 1)
+def times_pi(a):  return a * math.pi
+def times_3(a):   return a * 3.0
 
-# bloques auxiliares para componer k*pi*x
-def times_pi(a):   return a * math.pi
-def times_3(a):    return a * 3.0
+def safe_exp_np(x, cap=20.0):
+    return np.exp(cap * np.tanh(x / cap))
+
+def sin_kpi_x_1(x): return np.sin(1.0 * math.pi * x)
+def sin_kpi_x_2(x): return np.sin(2.0 * math.pi * x)
+def sin_kpi_x_3(x): return np.sin(3.0 * math.pi * x)
+
+pset = gp.PrimitiveSet('MAIN', 2)  # args: x, t
+pset.renameArguments(ARG0='x')
+pset.renameArguments(ARG1='t')
+
+pset.addPrimitive(np_add, 2)
+pset.addPrimitive(np_sub, 2)
+pset.addPrimitive(np_mul, 2)
+pset.addPrimitive(np_neg, 1)
+pset.addPrimitive(np_sin, 1)
+pset.addPrimitive(np_cos, 1)
+
 pset.addPrimitive(times_pi, 1)
 pset.addPrimitive(times_3, 1)
 
+# Puedes activar safe_exp si quieres facilitar decaimiento estable:
+# pset.addPrimitive(safe_exp_np, 1)
 
-
-# --- Exponencial protegida para evitar overflow/NaN ---
-# --- Exponencial protegida, clip suave con tanh ---
-def safe_exp(x, cap=20.0):
-    # numérica (para GP y visualización)
-    return math.exp(cap * math.tanh(x / cap))
-
-def safe_exp_sym(a, cap=20):
-    # simbólica (para derivar y lambdify sin DiracDelta)
-    return sympy.exp(cap * sympy.tanh(a / cap))
-
-
-
-
-pset.addPrimitive(safe_exp, 1)
-
-# senos "listos" sin(k*pi*x) para k=1,2,3
-def sin_kpi_x_1(x): return math.sin(1.0 * math.pi * x)
-def sin_kpi_x_2(x): return math.sin(2.0 * math.pi * x)
-def sin_kpi_x_3(x): return math.sin(3.0 * math.pi * x)
+# Senoides espaciales (útiles si usas x(1-x)g)
 pset.addPrimitive(sin_kpi_x_1, 1)
 pset.addPrimitive(sin_kpi_x_2, 1)
 pset.addPrimitive(sin_kpi_x_3, 1)
 
-# constantes
-pset.addTerminal(math.pi, name="pi")     # constante fija
-pset.addTerminal(0.2, name="one_fifth")  # 1/5 exacto
+# Terminales fijas
+pset.addTerminal(math.pi, name="pi")
+pset.addTerminal(0.2, name="one_fifth")
 pset.addTerminal(1.0, name="one")
 pset.addTerminal(2.0, name="two")
 pset.addTerminal(3.0, name="three")
 
-# constantes efímeras (usar partial para evitar warnings de pickle)
+# Constantes efímeras
 pset.addEphemeralConstant("U55", partial(random.uniform, -2.0, 2.0))
 pset.addEphemeralConstant("U11", partial(random.uniform, -0.5, 0.5))
 pset.addEphemeralConstant("G01", partial(random.gauss, 0.0, 0.5))
@@ -120,115 +128,88 @@ except AttributeError:
     creator.create("Individual", gp.PrimitiveTree, fitness=creator.FitnessMin)
 
 toolbox = base.Toolbox()
-
-# un poco más de profundidad + subárboles de mutación más ricos
-toolbox.register('expr', gp.genHalfAndHalf, pset=pset, min_=3, max_=7)
+toolbox.register('expr', gp.genHalfAndHalf, pset=pset, min_=3, max_=6)
 toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.expr)
 toolbox.register('population', tools.initRepeat, list, toolbox.individual)
-
 toolbox.register("compile", gp.compile, pset=pset)
 
 # =========================
-# Datos objetivo (fase 1)
+# Parámetros PDE y malla
 # =========================
-cantidad_puntos = 100
+alpha = 1.0
+t_min = 1e-3
+Nx, Nt = 64, 64
+X = np.linspace(0.0, 1.0, Nx)
+T = np.linspace(t_min, 0.15, Nt)
+XX, TT = np.meshgrid(X, T, indexing='xy')  # (Nt, Nx)
+dx = X[1] - X[0]
+dt = T[1] - T[0]
 
-# Longitud de la varilla
-x = np.linspace(0.0, 1.0, cantidad_puntos)
-
-# Tiempo inicial ( segundos )
-t = np.linspace(0.0, 60, cantidad_puntos)
-
-
-data_points = x  
-valores_objetivo = t
-
-# =========================
-# Helper: forzar dependencia en x
-# =========================
-
+# IC exacta en t=0
+X_ic = X.copy()
+target_ic = (1.0/5.0) * np.sin(3*np.pi*X_ic)
 
 # =========================
-# Evaluación robusta
+# Evaluación
 # =========================
-
-
-sx = sympy.symbols('x')   # símbolos reservados para Fase 2 (no usados aquí)
-st = sympy.symbols('t')
-alpha = 1.0  # difusividad térmica
-
-
-
-replacements = {
-  "add": lambda a,b: a + b,         "sub": lambda a,b: a - b,
-  "mul": lambda a,b: a * b,         "neg": lambda a: -a,
-  "sin": sympy.sin,                 "cos": sympy.cos,
-  "safe_exp": safe_exp_sym,                 # o tu safe_exp simbólica
-  "times_pi": lambda a: a*sympy.pi, "times_3": lambda a: 3*a,
-  "pi": sympy.pi,
-  "one_fifth": sympy.Rational(1,5),
-  "one": sympy.Integer(1), "two": sympy.Integer(2), "three": sympy.Integer(3),
-  "sin_kpi_x_1": lambda a: sympy.sin(sympy.pi*a),
-  "sin_kpi_x_2": lambda a: sympy.sin(2*sympy.pi*a),
-  "sin_kpi_x_3": lambda a: sympy.sin(3*sympy.pi*a),
-  "x": sx, "t": st
-}   
-
 def evaluar(ind):
-    # 1) Árbol -> Sympy
     try:
-        u = sympy.sympify(str(ind), locals=replacements)
+        base_fun = toolbox.compile(expr=ind)  # g(x,t) o r(x,t)/h(x,t) según ansatz
     except Exception:
         return (1e9,)
 
-    # 2) Derivadas simbólicas
-    du_dt  = sympy.diff(u, st)
-    d2u_dx = sympy.diff(u, sx, 2)
-    resid  = du_dt - alpha*d2u_dx
+    # Ansatze coherentes con impresión simbólica:
+    if MODE_AWARE_ANSATZ:
+        # u(x,t) = 0.2 * sin(3πx) * h(t),  h(t) = 1 + t * r(t); r(t) = base_fun(0,t)
+        def h_time_only(t):
+            return 1.0 + t * base_fun(0.0, t)   # fuerza h(0)=1
+        def u(x, t):
+            return 0.2 * np.sin(3.0*math.pi*x) * h_time_only(t)
+    else:
+        # u(x,t) = x(1-x) * g(x,t)
+        def u(x, t):
+            return x * (1.0 - x) * base_fun(x, t)
 
-    # 3) Lambdify (vectorizable sobre NumPy)
-    f_res = sympy.lambdify((sx, st), resid, 'numpy')
-    f_u   = sympy.lambdify((sx, st), u,     'numpy')
+    try:
+        U = u(XX, TT)
+        if not np.all(np.isfinite(U)) or np.any(np.abs(U) > 1e8):
+            return (1e8,)
 
-    # 4) Mallas numéricas moderadas
-    Nx, Nt = 64, 64
-    X  = np.linspace(0.0, 1.0, Nx)
-    T  = np.linspace(0.0, 0.15, Nt)      # tiempo corto para estabilidad
-    XX, TT = np.meshgrid(X, T, indexing='xy')
+        # Derivadas centradas en interior
+        Ut  = (U[2:,1:-1] - U[:-2,1:-1]) / (2*dt)
+        Uxx = (U[1:-1,2:] - 2.0*U[1:-1,1:-1] + U[1:-1,:-2]) / (dx*dx)
 
-    # 5) Residuo PDE
-    R = f_res(XX, TT)
-    if not np.all(np.isfinite(R)):
+        resid = Ut - alpha * Uxx
+        if not np.all(np.isfinite(resid)) or np.any(np.abs(resid) > 1e8):
+            return (1e8,)
+        mse_res = float(np.mean(resid*resid))
+
+        # Condición inicial en t=0
+        U_init = u(X_ic, 0.0)
+        if not np.all(np.isfinite(U_init)) or np.any(np.abs(U_init) > 1e8):
+            return (1e8,)
+        ic_pen = float(np.mean((U_init - target_ic)**2))
+
+        # Anti-bloat
+        size_pen = 2e-4 * len(ind)
+
+        # Evitar soluciones casi constantes o sólo de t:
+        sample_x = np.linspace(0, 1, 8)
+        sample_t = np.linspace(0.0, 0.15, 8)
+        SX, ST = np.meshgrid(sample_x, sample_t, indexing='xy')
+        UU = u(SX, ST)
+        var_x = float(np.var(UU, axis=0).mean())
+        var_t = float(np.var(UU, axis=1).mean())
+        dep_pen = 0.0
+        if var_x < 1e-8: dep_pen += 1.0
+        if var_t < 1e-10: dep_pen += 0.2
+
+        # IC con mayor peso (ahora h(0)=1 por construcción, debe caer rápido)
+        λ_ic = 30.0
+        loss = mse_res + λ_ic*ic_pen + size_pen + dep_pen
+        return (loss,)
+    except Exception:
         return (1e8,)
-    mse_res = float(np.mean(R*R))
-
-    # 6) Condiciones de frontera u(0,t)=u(1,t)=0
-    U_left  = f_u(0.0, T)
-    U_right = f_u(1.0, T)
-    if not (np.all(np.isfinite(U_left)) and np.all(np.isfinite(U_right))):
-        return (1e8,)
-    bc_pen = float(np.mean(U_left*U_left) + np.mean(U_right*U_right))
-
-    # 7) Condición inicial u(x,0)= (1/5) sin(3πx)
-    U_init = f_u(X, 0.0)
-    target = (1.0/5.0)*np.sin(3*np.pi*X)
-    if not np.all(np.isfinite(U_init)):
-        return (1e8,)
-    ic_pen = float(np.mean((U_init - target)**2))
-
-    # 8) Regularización anti-bloat
-    size_pen = 1e-4 * len(ind)
-
-    # 9) Fitness total (minimizar)
-    λ_bc, λ_ic = 1.0, 10.0
-    deps = u.free_symbols
-    dep_pen = 0.0
-    if sx not in deps:
-        dep_pen += 1.0
-    if st not in deps:
-        dep_pen += 0.2
-    loss = mse_res + λ_bc*bc_pen + λ_ic*ic_pen + size_pen + dep_pen
-    return (loss,)
 
 toolbox.register("evaluate", evaluar)
 toolbox.register("select", tools.selTournament, tournsize=3)
@@ -236,22 +217,19 @@ toolbox.register("mate", gp.cxOnePoint)
 toolbox.register("expr_mut", gp.genFull, min_=1, max_=4)
 toolbox.register("mutate", gp.mutUniform, expr=toolbox.expr_mut, pset=pset)
 
-# control de bloat adicional (altura máx)
-toolbox.decorate("mate", gp.staticLimit(key=operator.attrgetter("height"), max_value=17))
-toolbox.decorate("mutate", gp.staticLimit(key=operator.attrgetter("height"), max_value=17))
+# Limitar altura para controlar bloat
+toolbox.decorate("mate", gp.staticLimit(key=operator.attrgetter("height"), max_value=16))
+toolbox.decorate("mutate", gp.staticLimit(key=operator.attrgetter("height"), max_value=16))
 
 # =========================
-# Evolución
+# Evolución: HOF top-k y elitismo efectivo
 # =========================
-poblacion = toolbox.population(n=600)
-hof = tools.HallOfFame(1)
+poblacion = toolbox.population(n=400)
+hof = tools.HallOfFame(10)
 
-
-
-
-cxpb = 0.4
-mutpb = 0.4
-ngen  = 300
+cxpb = 0.5
+mutpb = 0.45
+ngen  = 120
 
 stats = tools.Statistics(lambda ind: ind.fitness.values)
 stats.register("avg", np.mean)
@@ -262,32 +240,100 @@ stats.register("max", np.max)
 algorithms.eaSimple(poblacion, toolbox, cxpb=cxpb, mutpb=mutpb, ngen=ngen,
                     stats=stats, halloffame=hof, verbose=True)
 
-mejor = hof[0]
-print("\nMejor individuo (DEAP):", mejor)
+# =========================
+# Reporte y visualización
+# =========================
+def compile_u_from_ind(ind):
+    base_fun = toolbox.compile(expr=ind)
+    if MODE_AWARE_ANSATZ:
+        def h_time_only(t):
+            return 1.0 + t * base_fun(0.0, t)
+        return lambda x,t: 0.2 * np.sin(3.0*math.pi*x) * h_time_only(t)
+    else:
+        return lambda x,t: x*(1.0-x) * base_fun(x,t)
 
-# =========================
-# Visualización vs objetivo
-# =========================
-func_mejor = toolbox.compile(expr=mejor)
-y_gp = np.array([func_mejor(xi, 0.0) for xi in x_grid], dtype=float)
-mse_final = float(((y_gp - u_inicial)**2).mean())
-print(f"MSE mejor individuo: {mse_final:.8e}")
+def residual_proxy(u_callable):
+    U = u_callable(XX, TT)
+    Ut  = (U[2:,1:-1] - U[:-2,1:-1]) / (2*dt)
+    Uxx = (U[1:-1,2:] - 2.0*U[1:-1,1:-1] + U[1:-1,:-2]) / (dx*dx)
+    return float(np.mean((Ut - alpha*Uxx)**2))
+
+print("\n===== TOP-10 HALL OF FAME =====")
+for i, ind in enumerate(hof):
+    u_i = compile_u_from_ind(ind)
+    ic_mse = float(np.mean((u_i(x_grid, 0.0) - u_inicial)**2))
+    res_mse = residual_proxy(u_i)
+    print(f"[{i}] size={len(ind):3d}  IC_MSE={ic_mse:.6e}  RES_MSE={res_mse:.6e}  expr={ind}")
+
+# Mejor individuo
+mejor = hof[0]
+u_best = compile_u_from_ind(mejor)
+
+# Comparación IC
+y_gp = u_best(x_grid, 0.0)
+mse_final_ic = float(((y_gp - u_inicial)**2).mean())
+print(f"\nMSE mejor individuo (IC t=0): {mse_final_ic:.8e}")
 
 plt.figure(figsize=(10,5))
 plt.plot(x_grid, u_inicial, label="Objetivo u(x,0)", linewidth=2)
-plt.plot(x_grid, y_gp, label="Individuo GP", linestyle="--")
+plt.plot(x_grid, y_gp, label="Individuo GP (t=0)", linestyle="--")
 plt.xlabel("x (posición a lo largo de la varilla)")
-plt.ylabel("temperatura inicial")
-plt.title("Ajuste simbólico de la condición inicial")
+plt.ylabel("temperatura")
+plt.title("Ajuste simbólico de la condición inicial (Top-1)")
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
 plt.show()
 
-# =========================
-# Expresión simbólica legible
-# =========================
+# Superficie 3D u(x,t)
+from mpl_toolkits.mplot3d import Axes3D  # noqa
+X3, T3 = np.meshgrid(x_grid, np.linspace(0.0, 0.15, 120), indexing='xy')
+U3 = u_best(X3, T3)
 
-expr_sym = sympy.sympify(str(mejor), locals=replacements)
-print("\nExpresión simbólica simplificada:", sympy.simplify(expr_sym))
+fig = plt.figure(figsize=(10,6))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot_surface(X3, T3, U3, linewidth=0, antialiased=True, shade=True)
+ax.set_xlabel("x"); ax.set_ylabel("t"); ax.set_zlabel("u(x,t)")
+ax.set_title("Superficie 3D de la mejor solución GP")
+plt.tight_layout()
+plt.show()
 
+# =========================
+# Expresión simbólica legible (SOLO para mostrar)
+# =========================
+# Mapeo a SymPy para pretty-print, sin tocar el fitness
+sx, st = sympy.symbols('x t', real=True)
+
+def safe_exp_sym(a, cap=20):
+    return sympy.exp(cap * sympy.tanh(a / cap))
+
+def sym_times_pi(a): return a*sympy.pi
+def sym_times_3(a):  return 3*a
+
+replacements = {
+  "add": lambda a,b: a + b,         "sub": lambda a,b: a - b,
+  "mul": lambda a,b: a * b,         "neg": lambda a: -a,
+  "sin": sympy.sin,                 "cos": sympy.cos,
+  "safe_exp": safe_exp_sym,         # si activas safe_exp_np en primitivas
+  "times_pi": sym_times_pi,         "times_3": sym_times_3,
+  "pi": sympy.pi,
+  "one_fifth": sympy.Rational(1,5),
+  "one": sympy.Integer(1), "two": sympy.Integer(2), "three": sympy.Integer(3),
+  "sin_kpi_x_1": lambda a: sympy.sin(sympy.pi*a),
+  "sin_kpi_x_2": lambda a: sympy.sin(2*sympy.pi*a),
+  "sin_kpi_x_3": lambda a: sympy.sin(3*sympy.pi*a),
+  "x": sx, "t": st
+}
+
+try:
+    g_sym = sympy.sympify(str(mejor), locals=replacements)
+    if MODE_AWARE_ANSATZ:
+        # u(x,t) = (1/5) sin(3πx) * [ 1 + t * r(t) ] con r(t) = g_sym(x=0,t)
+        r_t = g_sym.subs({sx: sympy.Integer(0)})
+        u_sym = sympy.Rational(1,5) * sympy.sin(3*sympy.pi*sx) * (1 + st * r_t)
+    else:
+        u_sym = sx*(1-sx) * g_sym
+    print("\nExpresión simbólica simplificada (Top-1):")
+    print(sympy.simplify(u_sym))
+except Exception as e:
+    print("\nNo se pudo formatear simbólicamente el mejor individuo:", e)
