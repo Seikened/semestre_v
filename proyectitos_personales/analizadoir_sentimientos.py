@@ -8,7 +8,7 @@ import polars as pl
 # ——————————————————————————————————
 # Ajustes de ejecución
 # ——————————————————————————————————
-# Sube MAX_LEN a 256 o 512 si quieres procesar más contexto por texto.
+# Se sube MAX_LEN a 256 o 512 si se quieren procesar más contexto por texto.
 MAX_LEN = 128
 
 try:
@@ -17,7 +17,7 @@ except Exception:
     pass
 
 # ——————————————————————————————————
-# Textos (idénticos a los tuyos)
+# Textos 
 # ——————————————————————————————————
 noticia_positiva = "En un anuncio que ha generado entusiasmo a nivel internacional, la Agencia Espacial Global confirmó hoy que la misión Artemis-X ha logrado aterrizar con éxito en la superficie de Marte, convirtiéndose en la primera operación tripulada en la historia en hacerlo. Durante la transmisión en vivo, millones de personas alrededor del mundo celebraron cuando los astronautas descendieron de la nave y plantaron la bandera de la Tierra, símbolo de cooperación global. Según los expertos, este hito marcará el comienzo de una nueva era de exploración espacial, con planes para establecer un hábitat permanente en los próximos años. Las agencias participantes aseguraron que los datos recopilados permitirán avances en tecnología, medicina y energía, beneficiando directamente a la humanidad. La reacción en redes sociales fue inmediata, con mensajes de apoyo, felicitaciones y expresiones de esperanza por un futuro interplanetario. Los mercados bursátiles incluso reaccionaron positivamente, con un aumento notable en las acciones de compañías aeroespaciales. Los líderes mundiales han elogiado el esfuerzo conjunto y han prometido apoyo continuo para futuras misiones. Los científicos de la misión informaron que los primeros análisis de suelo confirman la presencia de agua en estado subterráneo, lo que podría facilitar la producción de combustible y el sustento de vida en el planeta rojo. En una conferencia posterior, los astronautas se mostraron emocionados y destacaron la importancia de seguir inspirando a nuevas generaciones a mirar hacia las estrellas."
 
@@ -38,7 +38,7 @@ def init_pipeline(max_len: int):
         device=device,
         truncation=True,        # aplica truncación por defecto
         max_length=max_len,     # longitud efectiva
-        top_k=None              # equivalente al viejo return_all_scores=True
+        top_k=None              
     )
 
 # ——————————————————————————————————
@@ -102,7 +102,7 @@ if __name__ == "__main__":
     df = pl.DataFrame(registros)
     df_pretty = formatear_df(df)
 
-    # Opcional: estilos de impresión de Polars
+    # Estilos de impresión de Polars
     pl.Config.set_tbl_rows(10)
     pl.Config.set_tbl_width_chars(120)
 
