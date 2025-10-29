@@ -46,6 +46,7 @@ dependencies = [
     "nltk==3.9.1",
     "numba>=0.62.1",
     "numpy<2",
+    "openpyxl>=3.1.5",
     "packaging==25.0",
     "pandas==2.3.2",
     "parso==0.8.5",
