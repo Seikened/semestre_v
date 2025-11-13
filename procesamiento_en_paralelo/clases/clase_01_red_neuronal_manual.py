@@ -29,7 +29,7 @@ class RedNeuronalBackpropagation:
         Retorna: 
             np.array: valor de salida
         """
-        
+        x = np.clip(x, -50, 50)
         
         sig = 1 / (1 + np.exp(-x))
         
@@ -64,14 +64,19 @@ class RedNeuronalBackpropagation:
             z: entrada neta a la capa actual
             """
             W = self.pesos[i]
-            a = salidas[-1]
+            a = activaciones[-1]
             b = self.sesgos[i]
             
             z = np.dot(W, a) + b
             salidas.append(z)
             
-            # Aplicar funcion de activacion
-            a = self.funcion_activacion(z)
+            if i== self.num_capas - 2:
+                a = z # Es decir la capa de salida es lineal
+            else:
+                # Aplicar funcion de activacion
+                a = self.funcion_activacion(z)
+                
+            
             activaciones.append(a)
 
         return salidas, activaciones
@@ -100,7 +105,8 @@ class RedNeuronalBackpropagation:
         gradientes_sesgos = [np.zeros_like(sesgo) for sesgo in self.sesgos]
         
         # Calcular el error en la capa de salida
-        error = (activaciones[-1] - objetivo) * self.funcion_activacion(salidas[-1], derivada=True)
+        #error = (activaciones[-1] - objetivo) * self.funcion_activacion(salidas[-1], derivada=True)
+        error = (activaciones[-1] - objetivo) # Capa de salida lineal (no se multiplica por derivada para que no se anule)
         
         # Almacenar gradientes para la última capa
         gradientes_pesos[-1] = np.dot(error, activaciones[-2].T)
@@ -122,7 +128,7 @@ class RedNeuronalBackpropagation:
         return gradientes_pesos, gradientes_sesgos
     
     
-    def actializar_pesos(self, gradientes_pesos, gradientes_sesgos):
+    def actualizar_pesos(self, gradientes_pesos, gradientes_sesgos):
         """
         Actualiza los pesos y sesgos usando los gradientes calculados
         Args:
@@ -136,7 +142,7 @@ class RedNeuronalBackpropagation:
             self.sesgos[i] -= self.tasa_aprendizaje * gradientes_sesgos[i]
     
     
-    def entrenar(self, entradas_entrenamiento,objetivos_entrenamiento, epocas, mostrar_progreso = True):
+    def entrenar(self, entradas_entrenamiento, objetivos_entrenamiento, epocas, mostrar_progreso = True):
         """
         Entrenar la red neuronal usando backpropagation
         Args:
@@ -161,7 +167,7 @@ class RedNeuronalBackpropagation:
                 error_total += np.mean((activaciones[-1] - objetivo) ** 2)
                 
                 # Propagación hacia atrás
-                gradcientes_pesos, gradientes_sesgos = self.propagacion_atras(
+                gradientes_pesos, gradientes_sesgos = self.propagacion_atras(
                     entradas_entrenamiento[i],
                     objetivos_entrenamiento[i],
                     salidas,
@@ -169,7 +175,7 @@ class RedNeuronalBackpropagation:
                 )
                 
                 # Actualizar pesos
-                self.actializar_pesos(gradcientes_pesos, gradientes_sesgos)
+                self.actualizar_pesos(gradientes_pesos, gradientes_sesgos)
             fin_epoca = time.time()
             
             # Mostrar progreso
@@ -201,25 +207,77 @@ class RedNeuronalBackpropagation:
     
 
 if __name__ == "__main__":
-        # Datos de entrenamiento: y = 2x
-    X_train = np.array([[x] for x in range(11)])  # 0,1,2,...,10
-    y_train = np.array([[2 * x] for x in range(11)])  # 0,2,4,...,20
+    def fahrenheit_to_celsius(fahrenheit: float) -> float:
+        celsius = (fahrenheit - 32) * (5 / 9)
+        return celsius
+
+    def normalizar_datos(x_train, y_train):
+        x_train = np.array(x_train, dtype=float)
+        y_train = np.array(y_train, dtype=float)
+
+        # Guardamos min y max para poder desnormalizar después
+        x_min, x_max = x_train.min(), x_train.max()
+        y_min, y_max = y_train.min(), y_train.max()
+
+        # Normalizamos a [-1, 1]
+        x_norm = 2 * (x_train - x_min) / (x_max - x_min) - 1
+        y_norm = 2 * (y_train - y_min) / (y_max - y_min) - 1
+
+        # Regresamos también los parámetros para desnormalizar
+        return (
+            x_norm.reshape(-1, 1),
+            y_norm.reshape(-1, 1),
+            x_min, x_max, y_min, y_max
+        )
+
+    def normalizar_x(x, x_min, x_max):
+        x = np.array(x, dtype=float)
+        return 2 * (x - x_min) / (x_max - x_min) - 1
+
+    def desnormalizar_y(y_norm, y_min, y_max):
+        # Inversa de la normalización a [-1, 1]
+        return ( (y_norm + 1) / 2 ) * (y_max - y_min) + y_min
+
+    def generador(min_val, max_val, numero_muestras):
+        x_train_fahrenheit = np.linspace(min_val, max_val, numero_muestras)
+        y_celsius = fahrenheit_to_celsius(x_train_fahrenheit)
+        return x_train_fahrenheit, y_celsius
+        
+    # ========= PARAMETROS =========
+    rango = 200
+    numero_muestras = 800
+    epocas = 1000
+    lr = 0.01   # más pequeña, más estable
+    
+    # Datos en escala original (F y C)
+    x_raw, y_raw = generador(min_val=-rango, max_val=rango, numero_muestras=numero_muestras)
+
+    # Normalizamos para entrenar
+    x_train, y_labels, x_min, x_max, y_min, y_max = normalizar_datos(x_raw, y_raw)
 
     # Arquitectura: 1 entrada, 1 salida, con 1 capa oculta pequeña
-    topologia = [1, 3, 1]  
-    red = RedNeuronalBackpropagation(topologia, tasa_aprendizaje=0.01)
+    topologia = [1,5,1]  
+    red = RedNeuronalBackpropagation(topologia, tasa_aprendizaje=lr)
 
     # Entrenamiento
-    red.entrenar(X_train, y_train, epocas=5000)
+    red.entrenar(x_train, y_labels, epocas=epocas, mostrar_progreso=True)
 
-    # Prueba
-    x_prueba = np.array([[4.0]])
-    prediccion = red.predecir(x_prueba)
-    print(f"\nPredicción para x={x_prueba[0][0]} → y={prediccion[0][0]:.2f}")
+    # Prueba con un valor específico (4°F)
+    f_test = 4.0
+    x_prueba_norm = normalizar_x([[f_test]], x_min, x_max)
+    pred_norm = red.predecir(x_prueba_norm)[0][0]
+    pred_celsius = desnormalizar_y(pred_norm, y_min, y_max)
+    real_celsius = fahrenheit_to_celsius(f_test)
+    error = abs(pred_celsius - real_celsius)
+    print(f"\nPredicción para Fahrenheit={f_test} → Celsius_pred={pred_celsius:.2f}, Celsius_real={real_celsius:.2f}, error={error:.2f}")
 
-    # Mostrar todos los resultados
+    # Mostrar varios resultados
+    fahrenheit_list = [0, 32, 50, 75, 100, 120, 150, 180, 200]
     print("\nResultados:")
-    for x in range(11):
-        pred = red.predecir(np.array([[x]]))[0][0]
-        print(f"x={x:2d}, y_real={2*x:4.1f}, y_pred={pred:6.2f}")
-    
+    for f in fahrenheit_list:
+        x_f_norm = normalizar_x([[f]], x_min, x_max)
+        pred_norm = red.predecir(x_f_norm)[0][0]
+        pred_c = desnormalizar_y(pred_norm, y_min, y_max)
+        y_real = fahrenheit_to_celsius(f)
+        error = abs(pred_c - y_real)
+        print(f"Fahrenheit={f:5.1f}, Celsius_real={y_real:7.3f}, Celsius_pred={pred_c:7.3f}, error={error:7.3f}")
