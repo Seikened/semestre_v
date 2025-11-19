@@ -245,7 +245,7 @@ if __name__ == "__main__":
         
     # ========= PARAMETROS =========
     rango = 200
-    numero_muestras = 800
+    numero_muestras = 8_000
     epocas = 1000
     lr = 0.01   # más pequeña, más estable
     
