@@ -314,7 +314,7 @@ def animar_convergencia(lab, historial_rutas, interval=500):
         update,
         frames=len(historial_rutas),
         init_func=init,
-        blit=False,          # ponlo en False, suele ir mejor en Colab
+        blit=False,
         interval=interval,
         repeat=True
     )
