@@ -169,10 +169,13 @@ def actualizar_feromonas(feromonas, rutas, distancias, rho, q):
                 feromonas[a][b] += q / dist
 
 
-def aco():
+def aco(devolver_historial=False):
     feromonas = inicializar_feromonas(GRAFO_DISTANCIAS)
     mejor_ruta = None
     mejor_distancia = math.inf
+
+    historial_mejor_ruta = []      # mejor ruta en cada iteración
+    historial_mejor_dist = []      # mejor distancia en cada iteración
 
     for iteracion in range(NUM_ITERACIONES):
         rutas = []
@@ -190,11 +193,18 @@ def aco():
 
         actualizar_feromonas(feromonas, rutas, distancias, RHO, Q)
 
+        # guardamos el mejor hasta ese momento (puede ser None al inicio)
+        historial_mejor_ruta.append(mejor_ruta.copy() if mejor_ruta is not None else None)
+        historial_mejor_dist.append(mejor_distancia)
+
         print(f"Iteración {iteracion+1}: Mejor distancia = {mejor_distancia:.3f}")
 
     print("\n--- RESULTADO FINAL ---")
     print(f"Mejor ruta encontrada: {mejor_ruta}")
     print(f"Distancia total: {mejor_distancia:.3f}")
+
+    if devolver_historial:
+        return mejor_ruta, mejor_distancia, historial_mejor_ruta, historial_mejor_dist
     return mejor_ruta, mejor_distancia
 
 
@@ -252,6 +262,75 @@ def visualizar_laberinto(lab, ruta=None):
     
 
 
+from matplotlib.animation import FuncAnimation
+
+
+def animar_convergencia(lab, historial_rutas, interval=500):
+    filas = len(lab)
+    columnas = len(lab[0])
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    matriz = [[lab[i][j] for j in range(columnas)] for i in range(filas)]
+    ax.imshow(matriz, cmap="gray", origin="upper")
+
+    ax.set_xticks(range(columnas))
+    ax.set_yticks(range(filas))
+    ax.set_xticks([x - 0.5 for x in range(1, columnas)], minor=True)
+    ax.set_yticks([y - 0.5 for y in range(1, filas)], minor=True)
+    ax.grid(which="minor", color="lightgrey", linestyle="-", linewidth=0.5)
+
+    inicio_x, inicio_y = NODO_INICIO[1], NODO_INICIO[0]
+    fin_x, fin_y = NODO_FINAL[1], NODO_FINAL[0]
+
+    ax.scatter(inicio_x, inicio_y, c="limegreen", s=200,
+               marker="o", edgecolors="black", label="Inicio")
+    ax.scatter(fin_x, fin_y, c="red", s=200,
+               marker="o", edgecolors="black", label="Salida")
+
+    linea_ruta, = ax.plot([], [], color="orange", linewidth=3, label="Mejor ruta")
+    ax.legend(loc="upper right")
+
+    def init():
+        linea_ruta.set_data([], [])
+        ax.set_title("Sin solución todavía")
+        return linea_ruta,
+
+    def update(frame):
+        ruta = historial_rutas[frame]
+        if ruta is None:
+            linea_ruta.set_data([], [])
+            ax.set_title(f"Iteración {frame+1}: sin ruta completa aún")
+        else:
+            xs = [n[1] for n in ruta]
+            ys = [n[0] for n in ruta]
+            linea_ruta.set_data(xs, ys)
+            ax.set_title(f"Iteración {frame+1}: mejor ruta encontrada")
+
+        return linea_ruta,
+
+    anim = FuncAnimation(
+        fig,
+        update,
+        frames=len(historial_rutas),
+        init_func=init,
+        blit=False,          # ponlo en False, suele ir mejor en Colab
+        interval=interval,
+        repeat=True
+    )
+
+    plt.tight_layout()
+    plt.show()
+    return anim
+
 if __name__ == "__main__":
-    mejor_ruta, mejor_distancia = aco()
-    visualizar_laberinto(laberinto, mejor_ruta)
+    mejor_ruta, mejor_distancia, historial_rutas, historial_dist = aco(devolver_historial=True)
+
+    from IPython.display import HTML
+    from matplotlib import rc
+
+    rc('animation', html='jshtml')  # para que use JS en lugar de video
+
+    anim = animar_convergencia(laberinto, historial_rutas)
+    HTML(anim.to_jshtml())
+    
