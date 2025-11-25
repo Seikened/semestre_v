@@ -13,6 +13,7 @@ Implementar un algoritmo de optimización por colonia de hormigas (ACO) para enc
 """
 
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 import networkx as nx
 import random
 import math
@@ -60,15 +61,13 @@ def laberinto_a_grafo(lab):
 
     return grafo
 
-grafo = laberinto_a_grafo(laberinto)
-grafo
 
 # --- 1. PARÁMETROS DEL PROBLEMA ---
-GRAFO_DISTANCIAS = grafo
+GRAFO_DISTANCIAS = laberinto_a_grafo(laberinto)
 NODO_INICIO = (0, 0)
 NODO_FINAL = (14, 14)
-TODOS_NODOS = list(GRAFO_DISTANCIAS.keys())
-NUM_NODOS = len(TODOS_NODOS)
+ALL_NODES = list(GRAFO_DISTANCIAS.keys())
+NUM_NODOS = len(ALL_NODES)
 
 # --- 2. PARÁMETROS ACO ---
 NUM_HORMIGAS = 2
@@ -125,7 +124,7 @@ def seleccionar_nodo(probabilidades):
 def construir_ruta(feromonas, grafo, alpha, beta):
     ruta = [NODO_INICIO]
     actual = NODO_INICIO
-    nodos_no_visitados = TODOS_NODOS.copy()
+    nodos_no_visitados = ALL_NODES.copy()
     nodos_no_visitados.remove(actual)
 
     while actual != NODO_FINAL and len(nodos_no_visitados) > 0:
@@ -262,7 +261,7 @@ def visualizar_laberinto(lab, ruta=None):
     
 
 
-from matplotlib.animation import FuncAnimation
+
 
 
 def animar_convergencia(lab, historial_rutas, interval=500):
@@ -324,7 +323,7 @@ def animar_convergencia(lab, historial_rutas, interval=500):
     return anim
 
 if __name__ == "__main__":
-    mejor_ruta, mejor_distancia, historial_rutas, historial_dist = aco(devolver_historial=True)
+    mejor_ruta, mejor_distancia, historial_rutas, historial_dist = aco(devolver_historial=True) # type: ignore
 
     from IPython.display import HTML
     from matplotlib import rc
