@@ -65,13 +65,14 @@ def laberinto_a_grafo(lab):
 # --- 1. PARÁMETROS DEL PROBLEMA ---
 GRAFO_DISTANCIAS = laberinto_a_grafo(laberinto)
 NODO_INICIO = (0, 0)
-NODO_FINAL = (14, 14)
+NODO_FINAL = (12, 0)
+# NODO_FINAL = (14, 14)
 ALL_NODES = list(GRAFO_DISTANCIAS.keys())
 NUM_NODOS = len(ALL_NODES)
 
 # --- 2. PARÁMETROS ACO ---
-NUM_HORMIGAS = 2
-NUM_ITERACIONES = 10
+NUM_HORMIGAS = 10
+NUM_ITERACIONES = 5
 RHO = 0.01       # Tasa de evaporación
 Q = 1.0          # Constante de depósito de feromona
 ALFA = 1.0       # Influencia del rastro de feromona
