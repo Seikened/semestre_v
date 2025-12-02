@@ -1,14 +1,13 @@
-from paralelizado import main_paralelizado
-from proyectofinal_evoluciondiferencial_recocidosimulado import main_no_paralelizado
+from recocido import main_paralelizado
+from recocido import main_no_paralelizado
 import matplotlib.pyplot as plt
 
 
-lis_gen = [100, 1_000, 10_000]
+lis_temp = [1_000, 100_000, 1_000_000]
 
-for gen in lis_gen:
-    pso_no_paralelizado, lista_tiempos_no_paralelizado = main_no_paralelizado(gen)
-    pso_paralelizado, lista_tiempos_paralelizado = main_paralelizado(gen)
-
+for temp in lis_temp:
+    pso_no_paralelizado, lista_tiempos_no_paralelizado = main_no_paralelizado(temp)
+    pso_paralelizado, lista_tiempos_paralelizado = main_paralelizado(temp)
     speedup = pso_no_paralelizado / pso_paralelizado
     print(f"Speedup: {speedup:.2f}x")
 

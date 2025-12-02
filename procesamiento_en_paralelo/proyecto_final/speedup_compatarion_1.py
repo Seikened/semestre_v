@@ -1,5 +1,5 @@
-from paralelizado import main_paralelizado
-from proyectofinal_evoluciondiferencial_recocidosimulado import main_no_paralelizado
+from diferencial import main_paralelizado
+from diferencial import main_no_paralelizado
 import matplotlib.pyplot as plt
 
 
