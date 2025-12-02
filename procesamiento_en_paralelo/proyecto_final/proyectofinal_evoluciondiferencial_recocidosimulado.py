@@ -59,7 +59,7 @@ def seleccion(ind, trial):
 # ============================================================
 # 4. Implementación de Evolución Diferencial
 # ============================================================
-def main_no_paralelizado(n_gen):
+def main_no_paralelizado(n_gen=10_000):
     inicio = perf_counter()
 
     # Parámetros del problema

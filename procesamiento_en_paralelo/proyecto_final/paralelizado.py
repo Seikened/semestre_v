@@ -73,7 +73,7 @@ def cruza(ind, mut, CR):
 # ============================================================
 # 4. Implementación de Evolución Diferencial
 # ============================================================
-def main_paralelizado(n_gen):
+def main_paralelizado(n_gen=10_000):
     # Parámetros del problema
     d = 5
     tam_pob = 50
