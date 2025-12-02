@@ -73,7 +73,8 @@ def cruza(ind, mut, CR):
 # ============================================================
 # 4. Implementación de Evolución Diferencial
 # ============================================================
-def main_paralelizado(n_gen=10_000):
+def main_paralelizado(n_gen=10_000) -> tuple[float, list[float]]:
+    """Evolución Diferencial paralelizada con Numba."""
     # Parámetros del problema
     d = 5
     tam_pob = 50
