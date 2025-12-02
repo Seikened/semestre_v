@@ -2,6 +2,7 @@ import math
 import random
 import numpy as np
 from time import perf_counter
+import os
 
 
 # ============================================================
@@ -58,45 +59,55 @@ def seleccion(ind, trial):
 # ============================================================
 # 4. Implementación de Evolución Diferencial
 # ============================================================
-inicio = perf_counter()
+def main_no_paralelizado(n_gen):
+    inicio = perf_counter()
 
-# Parámetros del problema
-d = 5
-tam_pob = 50
-xmin = 0.0
-xmax = np.pi
+    # Parámetros del problema
+    d = 5
+    tam_pob = 50
+    xmin = 0.0
+    xmax = np.pi
 
-# Parámetros del algoritmo DE
-F = 0.8
-CR = 0.9
-generaciones = 10_000
+    # Parámetros del algoritmo DE
+    F = 0.8
+    CR = 0.9
+    generaciones = n_gen
 
-# Población inicial
-poblacion = ini_pob(tam_pob, d, xmin, xmax)
+    # Población inicial
+    poblacion = ini_pob(tam_pob, d, xmin, xmax)
+    lista_tiempos = []
+    # Bucle principal de DE
+    for g in range(generaciones):
+        tiempo_generacion_inicio = perf_counter()
+        nueva_pob = []
+        for i in range(tam_pob):
+            mut = mutacion(poblacion, F, i)
+            vec_prueba = cruza(poblacion[i], mut, CR)
+            ind_nuevo = seleccion(poblacion[i], vec_prueba)
+            nueva_pob.append(ind_nuevo)
+        poblacion = nueva_pob
+        lista_tiempos.append(perf_counter() - tiempo_generacion_inicio)
 
-# Bucle principal de DE
-for g in range(generaciones):
-    nueva_pob = []
-    for i in range(tam_pob):
-        mut = mutacion(poblacion, F, i)
-        vec_prueba = cruza(poblacion[i], mut, CR)
-        ind_nuevo = seleccion(poblacion[i], vec_prueba)
-        nueva_pob.append(ind_nuevo)
-    poblacion = nueva_pob
+    fin = perf_counter()
+    # ============================================================
+    # 5. Resultados
+    # ============================================================
 
-# ============================================================
-# 5. Resultados
-# ============================================================
+    fitness = [michalewicz(p) for p in poblacion]
+    best_idx = np.argmin(fitness)
+    best_de = np.array(poblacion[best_idx])
+    best_de_f = fitness[best_idx]
 
-fitness = [michalewicz(p) for p in poblacion]
-best_idx = np.argmin(fitness)
-best_de = np.array(poblacion[best_idx])
-best_de_f = fitness[best_idx]
+    os.system('clear')
+    print("============[ ❌ No Paralelizado ]============")
+    print(f"Tiempo transcurrido : {fin - inicio:.4f} segundos")
 
-fin = perf_counter()
-print(f"Tiempo transcurrido [❌No Paralelizado]: {fin - inicio:.4f} segundos")
+    print("\n===== MEJOR SOLUCIÓN DE =====")
+    print("x =", best_de)
+    print("f(x) =", best_de_f)
 
-print("\n===== MEJOR SOLUCIÓN DE =====")
-print("x =", best_de)
-print("f(x) =", best_de_f)
+    return fin - inicio, lista_tiempos
 
+
+if __name__ == "__main__":
+    main_no_paralelizado()

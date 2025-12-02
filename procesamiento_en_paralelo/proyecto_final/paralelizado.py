@@ -3,6 +3,7 @@ import random
 import numpy as np
 from time import perf_counter
 from numba import njit, prange
+import os
 
 
 # ============================================================
@@ -72,56 +73,65 @@ def cruza(ind, mut, CR):
 # ============================================================
 # 4. Implementación de Evolución Diferencial
 # ============================================================
+def main_paralelizado(n_gen):
+    # Parámetros del problema
+    d = 5
+    tam_pob = 50
+    xmin = 0.0
+    xmax = np.pi
 
-# Parámetros del problema
-d = 5
-tam_pob = 50
-xmin = 0.0
-xmax = np.pi
+    # Parámetros del algoritmo DE
+    F = 0.8
+    CR = 0.9
+    generaciones = n_gen
 
-# Parámetros del algoritmo DE
-F = 0.8
-CR = 0.9
-generaciones = 10_000
+    # Población inicial como matriz NumPy
+    poblacion = ini_pob(tam_pob, d, xmin, xmax)
 
-# Población inicial como matriz NumPy
-poblacion = ini_pob(tam_pob, d, xmin, xmax)
+    # Warmup: compilar Numba ANTES de medir el tiempo
+    _ = michalewicz_poblacion(poblacion[:5])
 
-# Warmup: compilar Numba ANTES de medir el tiempo
-_ = michalewicz_poblacion(poblacion[:5])
+    inicio = perf_counter()
+    lista_tiempos = []
+    # Bucle principal de DE
+    for g in range(generaciones):
+        tiempo_generacion_inicio = perf_counter()
+        # Construimos todos los trial vectors primero
+        trial_pop = np.empty_like(poblacion)
 
-inicio = perf_counter()
+        for i in range(tam_pob):
+            mut = mutacion(poblacion, F, i)
+            vec_prueba = cruza(poblacion[i], mut, CR)
+            trial_pop[i] = vec_prueba
 
-# Bucle principal de DE
-for g in range(generaciones):
-    # Construimos todos los trial vectors primero
-    trial_pop = np.empty_like(poblacion)
+        # Evaluamos población actual y trial en bloque usando Numba
+        f_pob = michalewicz_poblacion(poblacion)
+        f_trial = michalewicz_poblacion(trial_pop)
 
-    for i in range(tam_pob):
-        mut = mutacion(poblacion, F, i)
-        vec_prueba = cruza(poblacion[i], mut, CR)
-        trial_pop[i] = vec_prueba
+        # Selección vectorizada: si trial es mejor, lo sustituye
+        mask = f_trial < f_pob
+        poblacion[mask] = trial_pop[mask]
+        lista_tiempos.append(perf_counter() - tiempo_generacion_inicio)
 
-    # Evaluamos población actual y trial en bloque usando Numba
-    f_pob = michalewicz_poblacion(poblacion)
-    f_trial = michalewicz_poblacion(trial_pop)
+    fin = perf_counter()
+    # ============================================================
+    # 5. Resultados
+    # ============================================================
 
-    # Selección vectorizada: si trial es mejor, lo sustituye
-    mask = f_trial < f_pob
-    poblacion[mask] = trial_pop[mask]
+    fitness = michalewicz_poblacion(poblacion)
+    best_idx = np.argmin(fitness)
+    best_de = poblacion[best_idx]
+    best_de_f = fitness[best_idx]
 
-fin = perf_counter()
+    os.system('clear')
+    print("============[ ✅ Paralelizado ]============")
+    print(f"Tiempo transcurrido: {fin - inicio:.4f} segundos")
+    print("\n===== MEJOR SOLUCIÓN DE =====")
+    print("x =", best_de)
+    print("f(x) =", best_de_f)
 
-# ============================================================
-# 5. Resultados
-# ============================================================
+    return fin - inicio, lista_tiempos
 
-fitness = michalewicz_poblacion(poblacion)
-best_idx = np.argmin(fitness)
-best_de = poblacion[best_idx]
-best_de_f = fitness[best_idx]
 
-print(f"Tiempo transcurrido [Paralelizado]: {fin - inicio:.4f} segundos")
-print("\n===== MEJOR SOLUCIÓN DE =====")
-print("x =", best_de)
-print("f(x) =", best_de_f)
+if __name__ == "__main__":
+    main_paralelizado()
