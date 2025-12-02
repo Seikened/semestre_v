@@ -99,7 +99,6 @@ def main_no_paralelizado(n_gen=10_000)-> tuple[float, list[float]]:
     best_de = np.array(poblacion[best_idx])
     best_de_f = fitness[best_idx]
 
-    os.system('clear')
     print("============[ ❌ No Paralelizado ]============")
     print(f"Tiempo transcurrido : {fin - inicio:.4f} segundos")
 
