@@ -59,7 +59,6 @@ def seleccion(ind, trial):
 # ============================================================
 def main_no_paralelizado(n_gen=10_000)-> tuple[float, list[float]]:
     """Evolución Diferencial no paralelizada."""
-    inicio = perf_counter()
 
     # Parámetros del problema
     d = 5
@@ -74,6 +73,8 @@ def main_no_paralelizado(n_gen=10_000)-> tuple[float, list[float]]:
 
     # Población inicial
     poblacion = ini_pob(tam_pob, d, xmin, xmax)
+    
+    inicio = perf_counter()
     lista_tiempos = []
     # Bucle principal de DE
     for g in range(generaciones):

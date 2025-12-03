@@ -83,11 +83,11 @@ def recocido_simulado_core_jit(x_inicial,
 
 
 
-# ============================= EJECUCIÓN (NO PARALELIZADO) =============================
+# ============================= EJECUCIÓN (PARALELIZADO) =============================
 
 def main_paralelizado(tem=1_000_000):
     """
-    Versión base no paralelizada y sin Numba.
+    Versión base paralelizada
     Aquí medimos el tiempo total de la llamada al recocido.
     """
     # Aumentamos la dimensión para que haya más carga computacional
